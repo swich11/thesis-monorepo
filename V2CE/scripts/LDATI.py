@@ -326,7 +326,7 @@ if __name__ == "__main__":
     numpy.random.seed(42)
     torch.random.manual_seed(42)
     logging.basicConfig(level=logging.DEBUG)
-    B, P, C, H, W = 10, 2, 10, 260, 346
+    B, P, C, H, W = 1, 2, 10, 260, 346
 
     runtime, res = timer(
         lambda: sample_voxel_statistical(torch.rand((B, P, C, H, W), device='cuda', dtype=torch.float)))
