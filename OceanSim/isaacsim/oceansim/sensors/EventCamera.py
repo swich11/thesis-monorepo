@@ -117,12 +117,13 @@ class EventCamera(Camera):
 
 
     def render(self):
-        """Process events for the time period of a single frame. Display the accumulated events in an image frame.
+        """Process continuous events for the time period of a single frame. Display the accumulated events in an image frame.
 
         Note:
             - Updates viewport display if enabled
             - Saves image to disk if writing_dir was specified
         """
+        
         
 
 
