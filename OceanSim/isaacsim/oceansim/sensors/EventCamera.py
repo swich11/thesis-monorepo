@@ -110,29 +110,34 @@ class EventCamera(Camera):
 
         # Add event annotators here
         self._annot_dict = {
-            "HdrColor": (rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device)), None),
-            "Depths": (rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device)), None),
-            "Dists": (rep.AnnotatorRegistry.get_annotator('distance_to_camera'), None),
-            "MotionFlow": (rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device)), None),
+            "HdrColor": [rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device)), None],
+            "Depths": [rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device)), None],
+            "Dists": [rep.AnnotatorRegistry.get_annotator('distance_to_camera'), None],
+            "MotionFlow": [rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device)), None],
         }
+
+
+        # attach annotators
         for key in self._annot_dict.keys():
             self._annot_dict[key][0].attach(self._render_product_path)
 
-
-
-        # create h5py dataset
-        self._dataset_path = Path(__file__, 'dataset').resolve()
-        self._data_file = h5py.File(self._dataset_path, "w")
-        self._annot_dict["HdrColor"][0]
-
+        if self._writing:
+            self.open_h5py(Path(__file__, "dataset"))
+            self._w
 
         if self._viewport:
             self.make_viewport()
 
-
         if writing_dir is not None:
             self._writing = True
-            self._writing_backend = rep.BackendDispatch({"paths": {"out_dir":writing_dir}})
+            self._writing_backend = rep.BackendDispatch()
+            self._write_dict = {
+                "Events": [np.uint8, (1, self._resolution[0], self._resolution[1]), None],
+                "Depths": [np.float32, (1, self._resolution[0], self._resolution[1]), None],
+                "MotionFlow": [np.float32, (4, self._resolution[0], self._resolution[1]), None],
+            }
+            self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
+
 
         print(f'[{self._name}] Initialized successfully. Data writing: {self._writing}')
 
@@ -216,22 +221,38 @@ class EventCamera(Camera):
 
 
     
-    def open_h5py(path: str):
+    def open_h5py(self, path: str):
         """Create the h5py dataset on path. Destroys dataset if it already exists.
         
         Returns -> None
         """
-        pass
+        # TODO: filter dir for no overwrites
+        self._dataset_file = h5py.File(path, 'w')
+        for key in self._write_dict.keys():
+            data_shape = list(self._write_dict[key][1])
+            self._write_dict[key][2] = self._dataset_file.create_dataset(
+                                                                name=key,
+                                                                shape=tuple([0] + data_shape),
+                                                                dtype=self._write_dict[key][0],
+                                                                maxshape=tuple([None] + data_shape),
+                                                                compression="lzf",        
+            ) # this will autochunk and autocompress
+                                        
 
 
-    def write_h5py(data: np.ndarray, key: str):
+
+    def write_h5py(self, data: np.ndarray, key: str):
         """Write numpy array to h5py file format. The key defines the dataset group to store into.
 
         Returns -> None
         """
-        pass
+        dset: h5py.Dataset = self._write_dict[key][2]
+        dset.resize(tuple([dset.shape[0] + 1]) + dset.shape[1:len(dset.shape)]) # add 1 to dataset shape
+        dset[-1] = data
 
-    def close_h5py(file: h5py.File):
+
+
+    def close_h5py(self, file: h5py.File):
         """Close the h5py dataset for the run
 
         Returns -> None

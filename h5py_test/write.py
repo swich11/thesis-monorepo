@@ -15,7 +15,7 @@ dset = f.create_dataset('random_array',
 
 for i in range(10):
     data = np.random.rand(20, 10)
-    dset.resize((dset.shape[0] + 1, 20, 10))
-    dset[i, :, :] = data
+    dset.resize(tuple([dset.shape[0] + 1]) + dset.shape[1:len(dset.shape)])
+    dset[-1] = data
 
 f.close()
