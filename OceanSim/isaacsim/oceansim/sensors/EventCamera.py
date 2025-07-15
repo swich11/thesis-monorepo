@@ -102,7 +102,18 @@ class EventCamera(Camera):
             print(f'[{self._name}] On {str(self._device)}. Using default render parameters.')
 
 
-        # TODO: add event annotations
+        # Add event annotators here
+        self._hdr_annot = rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device)) # convert to event stream
+        self._ldr_annot = rep.AnnotatorRegistry.get_annotator('LdrColor', device=str(self._device)) # purely for testing purposes
+        self._depth_annot = rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device)) # depth map ground truth (to image plane)
+        self._motion_annot = rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device)) # optical flow ground truth
+
+
+
+        
+        self._hdr_annot.attach(self._render_product_path)
+
+
 
         if self._viewport:
             self.make_viewport()
@@ -123,6 +134,7 @@ class EventCamera(Camera):
             - Updates viewport display if enabled
             - Saves image to disk if writing_dir was specified
         """
+        hdr = self._hdr_annot.get_data()
         
         
 
@@ -141,7 +153,7 @@ class EventCamera(Camera):
         with self.window.frame:
             with ui.ZStack(height=self._resolution[1]):
                 ui.Rectangle(style={"background_color": 0xFF000000})
-                ui.Label('Run the scenario for image to be received',
+                ui.Label('Run the scenario for events to be received',
                          style={'font_size': 55,'alignment': ui.Alignment.CENTER},
                          word_wrap=True)
                 image_provider = ui.ImageWithProvider(self._provider, width=self._resolution[0], 
