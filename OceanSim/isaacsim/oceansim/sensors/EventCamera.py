@@ -1,6 +1,7 @@
 # Omniverse Import
 import omni.replicator.core as rep
 import omni.ui as ui
+from omni.replicator.core.scripts.functional import write_image
 
 
 # Isaac sim import
@@ -11,6 +12,9 @@ import numpy as np
 import warp as wp
 import yaml
 import carb
+
+
+# TODO: grab ground truth velocities
 
 
 class EventCamera(Camera):
@@ -49,7 +53,7 @@ class EventCamera(Camera):
                                     Note: Using same render product path on two Camera objects with different camera prims, resolutions is not supported
                                     Defaults to None
         """
-        self.name = name
+        self._name = name
         self._prim_path = prim_path
         self._res = resolution
         self._writing = False
@@ -104,15 +108,15 @@ class EventCamera(Camera):
 
         # Add event annotators here
         self._hdr_annot = rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device)) # convert to event stream
-        self._ldr_annot = rep.AnnotatorRegistry.get_annotator('LdrColor', device=str(self._device)) # purely for testing purposes
         self._depth_annot = rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device)) # depth map ground truth (to image plane)
-        self._motion_annot = rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device)) # optical flow ground truth
-
-
-
+        self._dist_annot = rep.AnnotatorRegistry.get_annotator('distance_to_camera') # for underwater colour attenuation (this is likely unneeded)
+        self._motion_annot = rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device)) # motion flow ground truth
         
-        self._hdr_annot.attach(self._render_product_path)
 
+        self._hdr_annot.attach(self._render_product_path)
+        self._depth_annot.attach(self._render_product_path)
+        self._dist_annot.attach(self._render_product_path)
+        self._motion_annot.attach(self._render_product_path)
 
 
         if self._viewport:
@@ -129,18 +133,32 @@ class EventCamera(Camera):
 
     def render(self):
         """Process continuous events for the time period of a single frame. Display the accumulated events in an image frame.
-
+        Also processes and saves:
+             - low dynamic range images
+             - depth maps to image plane
+             - motion flow
+             - camera prim velocity.
+        
         Note:
             - Updates viewport display if enabled
-            - Saves image to disk if writing_dir was specified
+            - Saves all to disk if writing_dir was specified
         """
+        # TODO: make warp kernel to turn data into events by interpolation, actually show event image
         hdr = self._hdr_annot.get_data()
+        ldr = self._rgb_annotator.get_data() # from the Camera class
+        depths = self._depth_annot.get_data()
+        dists = self._dist_annot.get_data()
+        motion_flow = self._motion_annot.get_data()
         
-        
+        if ldr.size != 0: # probably don't need this check
+            if self._viewport:
+                self._provider.set_image_data(ldr)
 
-
-
-
+            if self._writing:
+                self._writing_backend.schedule(write_image, path=f"RGB_image_{self._id}.png", data=ldr)
+                print(f'[{self._name}] [{self._id}] rendered rgb image saved to {self._writing_backend.output_dir}')
+            
+            self._id += 1
 
 
     def make_viewport(self):
@@ -149,7 +167,9 @@ class EventCamera(Camera):
         """
         self.wrapped_ui_elements = []
         self.window = ui.Window(self._name, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
-        self._provider = None # TODO: make ui.ImageProvider for event camera images
+
+        
+        self._provider = ui.ImageProvider() # TODO: make ui.ImageProvider for event camera images
         with self.window.frame:
             with ui.ZStack(height=self._resolution[1]):
                 ui.Rectangle(style={"background_color": 0xFF000000})
