@@ -13,9 +13,11 @@ import warp as wp
 import yaml
 import carb
 import h5py
+from pathlib import Path
 
 
 # TODO: grab ground truth velocities
+# TODO: make output dataset path choosable
 
 
 class EventCamera(Camera):
@@ -58,7 +60,6 @@ class EventCamera(Camera):
         self._prim_path = prim_path
         self._res = resolution
         self._writing = False
-
         super.__init__(prim_path, name, frequency, dt, resolution, position, translation, orientation, render_product_path)
 
 
@@ -108,16 +109,21 @@ class EventCamera(Camera):
 
 
         # Add event annotators here
-        self._hdr_annot = rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device)) # convert to event stream
-        self._depth_annot = rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device)) # depth map ground truth (to image plane)
-        self._dist_annot = rep.AnnotatorRegistry.get_annotator('distance_to_camera') # for underwater colour attenuation (this is likely unneeded)
-        self._motion_annot = rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device)) # motion flow ground truth
-        
+        self._annot_dict = {
+            "HdrColor": (rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device)), None),
+            "Depths": (rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device)), None),
+            "Dists": (rep.AnnotatorRegistry.get_annotator('distance_to_camera'), None),
+            "MotionFlow": (rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device)), None),
+        }
+        for key in self._annot_dict.keys():
+            self._annot_dict[key][0].attach(self._render_product_path)
 
-        self._hdr_annot.attach(self._render_product_path)
-        self._depth_annot.attach(self._render_product_path)
-        self._dist_annot.attach(self._render_product_path)
-        self._motion_annot.attach(self._render_product_path)
+
+
+        # create h5py dataset
+        self._dataset_path = Path(__file__, 'dataset').resolve()
+        self._data_file = h5py.File(self._dataset_path, "w")
+        self._annot_dict["HdrColor"][0]
 
 
         if self._viewport:
@@ -145,12 +151,10 @@ class EventCamera(Camera):
             - Saves all to disk if writing_dir was specified
         """
         # TODO: make warp kernel to turn data into events by interpolation, actually show event image
-        hdr = self._hdr_annot.get_data()
+        for key in self._annot_dict.keys():
+            self._annot_dict[key][1] = self._annot_dict[key][0].get_data() # store the last set of data in the dictionary for interpolation
         ldr = self._rgb_annotator.get_data() # from the Camera class
-        depths = self._depth_annot.get_data()
-        dists = self._dist_annot.get_data()
-        motion_flow = self._motion_annot.get_data()
-        
+
         if ldr.size != 0: # probably don't need this check
             if self._viewport:
                 self._provider.set_image_data(ldr)
@@ -209,3 +213,34 @@ class EventCamera(Camera):
         """
         for elem in self.wrapped_ui_elements:
             elem.destroy()
+
+
+    
+    def open_h5py(path: str):
+        """Create the h5py dataset on path. Destroys dataset if it already exists.
+        
+        Returns -> None
+        """
+        pass
+
+
+    def write_h5py(data: np.ndarray, key: str):
+        """Write numpy array to h5py file format. The key defines the dataset group to store into.
+
+        Returns -> None
+        """
+        pass
+
+    def close_h5py(file: h5py.File):
+        """Close the h5py dataset for the run
+
+        Returns -> None
+        """
+        file.close()
+
+
+
+
+
+
+
