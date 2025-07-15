@@ -1,7 +1,7 @@
 # Omniverse Import
 import omni.replicator.core as rep
 import omni.ui as ui
-from omni.replicator.core.scripts.functional import write_image
+from omni.replicator.core.scripts.functional import write_np
 
 
 # Isaac sim import
@@ -12,6 +12,7 @@ import numpy as np
 import warp as wp
 import yaml
 import carb
+import h5py
 
 
 # TODO: grab ground truth velocities
@@ -155,8 +156,10 @@ class EventCamera(Camera):
                 self._provider.set_image_data(ldr)
 
             if self._writing:
-                self._writing_backend.schedule(write_image, path=f"RGB_image_{self._id}.png", data=ldr)
+                self._writing_backend.schedule(write_np, path=f"RGB_image_{self._id}.png", data=ldr)
+                self._writing_backend.schedule()
                 print(f'[{self._name}] [{self._id}] rendered rgb image saved to {self._writing_backend.output_dir}')
+                
             
             self._id += 1
 
