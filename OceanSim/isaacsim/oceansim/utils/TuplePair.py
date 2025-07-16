@@ -1,9 +1,12 @@
+import numpy as np
+
+
 class TuplePair():
     """Tuple pair has type (tuple, data: any) where data is readable and writable
     """
-    def __init__(self, t: tuple, data):
+    def __init__(self, t: tuple, data:np.ndarray = None):
         self._t = t
-        self.data = data
+        self.data: np.ndarray = data
 
     
     # get item from tuple

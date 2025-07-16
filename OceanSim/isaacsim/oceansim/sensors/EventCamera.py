@@ -117,10 +117,10 @@ class EventCamera(Camera):
 
         # Add event annotators here
         self._annot_dict = {
-            "HdrColor": [rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device)), None],
-            "Depths": [rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device)), None],
-            "Dists": [rep.AnnotatorRegistry.get_annotator('distance_to_camera'), None],
-            "MotionFlow": [rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device)), None],
+            "HdrColor": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device))])),
+            "Depths": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device))])),
+            "Dists": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('distance_to_camera', device=str(self._device))])),
+            "MotionFlow":  TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device))])),
         }
 
 
@@ -139,9 +139,9 @@ class EventCamera(Camera):
             self._writing = True
             self._writing_backend = rep.BackendDispatch()
             self._write_dict = {
-                "Events": [np.uint8, (1, self._resolution[0], self._resolution[1]), None],
-                "Depths": [np.float32, (1, self._resolution[0], self._resolution[1]), None],
-                "MotionFlow": [np.float32, (4, self._resolution[0], self._resolution[1]), None],
+                "Events": TuplePair((np.uint8, (1, self._resolution[0], self._resolution[1]))),
+                "Depths": TuplePair((np.float32, (1, self._resolution[0], self._resolution[1]))),
+                "MotionFlow": TuplePair((np.float32, (4, self._resolution[0], self._resolution[1]))),
             }
             self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
 
@@ -164,12 +164,12 @@ class EventCamera(Camera):
         """
         # TODO: import oceansim warp on hdr make warp kernel to turn data into events by interpolation, actually show event image
         for key in self._annot_dict.keys():
-            self._annot_dict[key][1] = self._annot_dict[key][0].get_data() # store the last set of data in the dictionary for interpolation
+            self._annot_dict[key].data = self._annot_dict[key][0].get_data()
         ldr = self._rgb_annotator.get_data() # from the Camera class
         
         # testing
-        print(self._annot_dict["HdrColor"][1].dtype)
-        print(self._annot_dict["HdrColor"][1])
+        print(self._annot_dict["HdrColor"].data.dtype)
+        print(self._annot_dict["HdrColor"].data)
 
         if ldr.size != 0: # probably don't need this check
             if self._viewport:
@@ -246,7 +246,7 @@ class EventCamera(Camera):
         self._dataset_file = h5py.File(path, 'w')
         for key in self._write_dict.keys():
             data_shape = list(self._write_dict[key][1])
-            self._write_dict[key][2] = self._dataset_file.create_dataset(
+            self._write_dict[key].data = self._dataset_file.create_dataset(
                                                                 name=key,
                                                                 shape=tuple([0] + data_shape),
                                                                 dtype=self._write_dict[key][0],
@@ -262,7 +262,7 @@ class EventCamera(Camera):
 
         Returns -> None
         """
-        dset: h5py.Dataset = self._write_dict[key][2]
+        dset: h5py.Dataset = self._write_dict[key].data
         dset.resize(tuple([dset.shape[0] + 1]) + dset.shape[1:len(dset.shape)]) # add 1 to dataset shape
         dset[-1] = data
 
