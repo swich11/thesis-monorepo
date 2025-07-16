@@ -21,6 +21,8 @@ from utils.TuplePair import TuplePair
 
 # TODO: grab ground truth velocities
 # TODO: make output dataset path choosable
+# TODO: change event renderer to use warp
+# TODO: apply UW renderer to event camera renderer
 
 
 class EventCamera(Camera):
@@ -123,14 +125,9 @@ class EventCamera(Camera):
             "MotionFlow":  TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device))])),
         }
 
-
         # attach annotators
         for key in self._annot_dict.keys():
             self._annot_dict[key][0].attach(self._render_product_path)
-
-        if self._writing:
-            self.open_h5py(Path(__file__, "dataset"))
-            self._w
 
         if self._viewport:
             self.make_viewport()
@@ -163,13 +160,22 @@ class EventCamera(Camera):
             - Saves all to disk if writing_dir was specified
         """
         # TODO: import oceansim warp on hdr make warp kernel to turn data into events by interpolation, actually show event image
+        hdr_last = self._annot_dict["hdrColor"].data
         for key in self._annot_dict.keys():
             self._annot_dict[key].data = self._annot_dict[key][0].get_data()
         ldr = self._rgb_annotator.get_data() # from the Camera class
+        hdr_curr = self._annot_dict["hdrColor"].data
         
         # testing
-        print(self._annot_dict["HdrColor"].data.dtype)
-        print(self._annot_dict["HdrColor"].data)
+        if hdr_last:
+            # test prints
+            print(hdr_curr.dtype)
+            print(hdr_curr)
+            event_frame = self.generate_event_frame(hdr_last, hdr_curr)
+            print(event_frame)
+
+
+        # TODO: add event data to viewport
 
         if ldr.size != 0: # probably don't need this check
             if self._viewport:
@@ -236,7 +242,7 @@ class EventCamera(Camera):
             elem.destroy()
 
 
-    
+
     def open_h5py(self, path: str):
         """Create the h5py dataset on path. Destroys dataset if it already exists.
         
@@ -274,6 +280,38 @@ class EventCamera(Camera):
         Returns -> None
         """
         file.close()
+
+
+
+# TODO: convert to use warp later
+class EventRenderer():
+    def __init__(self, 
+                 resolution = (346, 260),
+                 threshold_on: float = 0.143,
+                 threshold_off: float = 0.225,
+                 std: float = 0.05,):
+        self._threshold_on = threshold_on
+        self._threshold_off = threshold_off
+        self.pixel_store: np.ndarray = np.zeros(resolution, np.float32)
+        self._noise_std = std
+
+
+    def render(self, hdrCurr: np.ndarray) -> np.ndarray:
+        hdrCurr = np.sum(hdrCurr[:, :, :3], axis=2) # add luminance for each colour channel together
+        hdrCurr = np.log10(hdrCurr) + np.random.normal(0, self._noise_std, hdrCurr.shape) # log scale and add threshold noise
+        on_pixels = hdrCurr - self.pixel_store > self._threshold_on
+        off_pixels = self.pixel_store - hdrCurr > self._threshold_off
+        self.pixel_store = np.logical_and(on_pixels, off_pixels)*hdrCurr
+        return on_pixels*np.int8(1) - off_pixels*np.int8(1) # off pixels represented as -1
+
+
+
+        
+        
+
+
+
+
 
 
 
