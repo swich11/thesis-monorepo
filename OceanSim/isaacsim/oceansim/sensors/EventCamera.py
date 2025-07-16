@@ -16,6 +16,9 @@ import h5py
 from pathlib import Path
 
 
+from utils.TuplePair import TuplePair
+
+
 # TODO: grab ground truth velocities
 # TODO: make output dataset path choosable
 
@@ -61,6 +64,10 @@ class EventCamera(Camera):
         self._res = resolution
         self._writing = False
         super.__init__(prim_path, name, frequency, dt, resolution, position, translation, orientation, render_product_path)
+
+
+    def __del__(self):
+        self.close()
 
 
     def initialize(self,
@@ -155,10 +162,14 @@ class EventCamera(Camera):
             - Updates viewport display if enabled
             - Saves all to disk if writing_dir was specified
         """
-        # TODO: make warp kernel to turn data into events by interpolation, actually show event image
+        # TODO: import oceansim warp on hdr make warp kernel to turn data into events by interpolation, actually show event image
         for key in self._annot_dict.keys():
             self._annot_dict[key][1] = self._annot_dict[key][0].get_data() # store the last set of data in the dictionary for interpolation
         ldr = self._rgb_annotator.get_data() # from the Camera class
+        
+        # testing
+        print(self._annot_dict["HdrColor"][1].dtype)
+        print(self._annot_dict["HdrColor"][1])
 
         if ldr.size != 0: # probably don't need this check
             if self._viewport:
@@ -204,7 +215,12 @@ class EventCamera(Camera):
             - Required for proper shutdown when done using the sensor
             - Also closes viewport window if one was created
         """
-        # TODO: after adding annotators
+        # this will lose data that hasn't been written yet but that is ok
+        for key in self._annot_dict.keys():
+            self._annot_dict[key][0].detach(self._render_product_path)
+            rep.AnnotatorCache.clear(self._annot_dict[key][0])
+
+        self.close_h5py() # stop writing data
         if self._viewport:
             self.ui_destroy()
         
