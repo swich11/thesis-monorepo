@@ -16,7 +16,7 @@ import h5py
 from pathlib import Path
 
 
-from utils.TuplePair import TuplePair
+from ..utils.TuplePair import TuplePair
 
 
 # TODO: grab ground truth velocities
