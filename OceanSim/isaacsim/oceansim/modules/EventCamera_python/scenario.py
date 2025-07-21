@@ -14,6 +14,9 @@ from ....oceansim.sensors.DVLsensor import DVLsensor
 from ....oceansim.sensors.UW_Camera import UW_Camera
 from ....oceansim.sensors.EventCamera import EventCamera
 
+# OceanSim imports
+from ...utils.keyboard_cmd import keyboard_cmd
+
 
 class Sensor_Scenario():
     def __init__(self):
@@ -28,6 +31,7 @@ class Sensor_Scenario():
 
         self._running_scenario = False
         self._time = 0.0
+        self._controls = []
 
 
     def setup_scenario(self, rob, sonar: ImagingSonarSensor | None, ev_cam: EventCamera | None, cam: UW_Camera | None, 
@@ -55,9 +59,11 @@ class Sensor_Scenario():
             case "Manual control":
                 self.setup_manual_control()
             case "Waypoints":
-                self.setup_waypoint_control()
+                pass # this is called elsewhere?
             case "Controller":
                 self.setup_controller_control()
+            case "Straight line":
+                pass # no need to set up control
             case _:
                 # wtf .. do default control
                 self.setup_manual_control()
@@ -69,8 +75,6 @@ class Sensor_Scenario():
         """
             Sets up manual control for the rov
         """
-        from ...utils.keyboard_cmd import keyboard_cmd
-
         self._rob_forceAPI = PhysxSchema.PhysxForceAPI.Apply(self._rob)
         self._force_cmd = keyboard_cmd(base_command=np.array([0.0, 0.0, 0.0]),
                                     input_keyboard_mapping={
@@ -104,11 +108,86 @@ class Sensor_Scenario():
                                     })
 
 
-    def setup_waypoint_control():
-        pass
+
+    def setup_waypoint_control(self, waypoint_path, default_waypoint_path):
+        try:
+            self.waypoints = read_waypoints_from_file(waypoint_path)
+            print("Waypoints loaded succesfully")
+            print(f"Waypoint[0]: {self.waypoints[0]}")
+        except:
+            self.waypoints = read_waypoints_from_file(default_waypoint_path)
+            print('Fail to load this waypoints. Back to default waypoints.')
+
+
+        def read_waypoints_from_file(file_path):
+            with open(file_path, 'r') as f:
+                return [(float(x) for x in line.strip().split()) for line in f] # extract waypoints
 
 
     def setup_controller_control():
         # TODO: add controller control
         pass
-    
+
+
+    def teardown_scenario(self):
+        # Cleanup GPU annotators
+        if self._sonar:
+            self._sonar.close()
+        if self._cam:
+            self._cam.close()
+        if self._ev_cam:
+            self._ev_cam.close()
+
+        # release controllers
+        if self._force_cmd:
+            self._force_cmd.cleanup()
+        if self._torque_cmd:
+            self._torque_cmd.cleanup()
+
+        self._rob = None
+        self._sonar = None
+        self._cam = None
+        self._ev_cam = None
+        self._DVL = None
+        self._baro = None
+        self._running_scenario = False
+        self._time = 0.0
+
+
+    def update_scenario(self, step: float):
+        if not self._running_scenario:
+            return
+        
+        self._time += step
+        
+        if self._sonar:
+            self._sonar.make_sonar_data()
+        if self._cam:
+            self._cam.render()
+        if self._ev_cam:
+            self._ev_cam.render()
+        if self._DVL:
+            self._DVL_reading = self._DVL.get_linear_vel()
+        if self._baro:
+            self._baro_reading = self._baro.get_pressure()
+
+        match self._ctrl_mode:
+            case "Manual control":
+                force_cmd = Gf.Vec3f(*self._force_cmd._base_command)
+                torque_cmd = Gf.Vec3f(*self._torque_cmd._base_command)
+                self._rob_forceAPI.CreateForceAttr().Set(force_cmd)
+                self._rob_forceAPI.CreateTorqueAttr().Set(torque_cmd)
+            case "Waypoints":
+                if len(self.waypoints) > 0:
+                    waypoints = self.waypoints[0]
+                    self._rob.GetAttribute('xformOp:translate').Set(Gf.Vec3f(waypoints[0], waypoints[1], waypoints[2]))
+                    self._rob.GetAttribute('xformOp:orient').Set(Gf.Quatd(waypoints[3], waypoints[4], waypoints[5], waypoints[6]))
+                    self.waypoints.pop(0)
+                else:
+                    print('Waypoints finished') 
+            case "Straight line":
+                SingleRigidPrim(prim_path=get_prim_path(self._rob)).set_linear_velocity(np.array([0.5,0,0]))
+            case "Controller":
+                # TODO: add controller inputs
+                pass
+
