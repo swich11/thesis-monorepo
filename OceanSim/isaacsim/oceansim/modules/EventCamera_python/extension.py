@@ -9,7 +9,7 @@
 
 import asyncio
 import gc
-import weakref
+import weakref # type: ignore
 
 
 import omni
@@ -73,7 +73,7 @@ class Extension(omni.ext.IExt):
                 onclick_action=(ext_id, f"CreateUIExtension:{EXTENSION_TITLE}"),
                 sub_menu=[
                     make_menu_item_description(
-                        ext_id, "Sensor Example", lambda a=weakref.proxy(self): a._menu_callback()
+                        ext_id, EXTENSION_TITLE, lambda a=weakref.proxy(self): a._menu_callback()
                     )
                 ],
             )
