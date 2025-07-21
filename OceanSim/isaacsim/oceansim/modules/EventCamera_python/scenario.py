@@ -16,6 +16,10 @@ from ....oceansim.sensors.EventCamera import EventCamera
 
 # OceanSim imports
 from ...utils.keyboard_cmd import keyboard_cmd
+from ...utils.GamePad import GamePad
+
+
+from carb.input import GamepadInput
 
 
 class Sensor_Scenario():
@@ -124,9 +128,8 @@ class Sensor_Scenario():
                 return [(float(x) for x in line.strip().split()) for line in f] # extract waypoints
 
 
-    def setup_controller_control():
-        # TODO: add controller control
-        pass
+    def setup_controller_control(self):
+        self._gamepad = GamePad()
 
 
     def teardown_scenario(self):
@@ -188,6 +191,13 @@ class Sensor_Scenario():
             case "Straight line":
                 SingleRigidPrim(prim_path=get_prim_path(self._rob)).set_linear_velocity(np.array([0.5,0,0]))
             case "Controller":
-                # TODO: add controller inputs
-                pass
+                commands = self._gamepad.get_gamepad_output()
+                force_cmd = 20 * Gf.Vec3f(commands[GamepadInput.LEFT_STICK_UP] - commands[GamepadInput.LEFT_STICK_DOWN],
+                                     commands[GamepadInput.LEFT_STICK_LEFT] - commands[GamepadInput.LEFT_STICK_RIGHT],
+                                     commands[GamepadInput.RIGHT_STICK_UP] - commands[GamepadInput.RIGHT_STICK_DOWN])
+                torque_cmd = 20 * Gf.Vec3f(commands[GamepadInput.RIGHT_SHOULDER] - commands[GamepadInput.LEFT_SHOULDER],
+                                           commands[GamepadInput.RIGHT_TRIGGER] - commands[GamepadInput.LEFT_TRIGGER],
+                                           commands[GamepadInput.RIGHT_STICK_LEFT] - commands[GamepadInput.RIGHT_STICK_RIGHT])
+                self._rob_forceAPI.CreateForceAttr().Set(force_cmd)
+                self._rob_forceAPI.CreateTorqueAttr().Set(torque_cmd)
 
