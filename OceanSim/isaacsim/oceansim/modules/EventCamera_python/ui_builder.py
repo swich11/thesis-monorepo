@@ -19,13 +19,18 @@ from isaacsim.examples.extension.core_connectors import LoadButton, ResetButton
 from isaacsim.core.utils.extensions import get_extension_path
 
 # Custom import
-from .scenario import MHL_Sensor_Example_Scenario
+from .scenario import Sensor_Scenario
 from .global_variables import EXTENSION_DESCRIPTION, EXTENSION_TITLE, EXTENSION_LINK
 from isaacsim.oceansim.utils.assets_utils import get_oceansim_assets_path
 
+
+# Sensor Imports
+from isaacsim.oceansim.sensors.EventCamera import EventCamera
+
+
+
 class UIBuilder():
     def __init__(self):
-
         self._ext_id = omni.kit.app.get_app().get_extension_manager().get_extension_id_by_module(__name__)
         self._file_path = os.path.abspath(__file__)
         self._title = EXTENSION_TITLE
@@ -141,7 +146,7 @@ class UIBuilder():
                     "Event Camera",
                     default_value=False,
                     tooltip=" Click this checkbox to activate event camera",
-                    on_click_fn=self.on_event_camera_checkbox_click_fn,
+                    on_click_fn=self._on_event_camera_checkbox_click_fn,
                 )
                 self._use_event_camera = False
                 self.wrapped_ui_elements.append(event_camera_check_box)
@@ -246,7 +251,7 @@ class UIBuilder():
         self._water_surface = 1.43389 # Arbitrary
         
         # Scenario
-        self._scenario = MHL_Sensor_Example_Scenario()
+        self._scenario = Sensor_Scenario()
 
 
     def _setup_scene(self):
@@ -322,7 +327,6 @@ class UIBuilder():
                                             angular_res=0.25,
                                             hori_res=4000
                                             )
-            
         if self._use_camera:
             from isaacsim.oceansim.sensors.UW_Camera import UW_Camera
 
@@ -331,7 +335,11 @@ class UIBuilder():
                                     translation=self._cam_trans)
             self._cam.set_focal_length(0.1 * self._cam_focal_length)
             self._cam.set_clipping_range(0.1, 100)
-            
+        if self._use_event_camera:
+            self._event_cam = EventCamera(prim_path=robot_prim_path + '/DAVIS')
+            # TODO: fix focal length to emulate the DAVIS
+            self._event_cam.set_focal_length(0.1 * self._cam_focal_length)
+            self._event_cam.set_clipping_range(0.1, 100)
         if self._use_DVL:
             from isaacsim.oceansim.sensors.DVLsensor import DVLsensor
 
@@ -339,7 +347,6 @@ class UIBuilder():
             self._DVL.attachDVL(rigid_body_path=robot_prim_path,
                                 translation=self._DVL_trans)
             self._DVL.add_debug_lines()
-            
         if self._use_baro:
             from isaacsim.oceansim.sensors.BarometerSensor import BarometerSensor
 
@@ -362,9 +369,12 @@ class UIBuilder():
         self._scenario_state_btn.enabled = True
         self._reset_btn.enabled = True
 
+
     def _reset_scenario(self):
         self._scenario.teardown_scenario()
-        self._scenario.setup_scenario(self._rob, self._sonar, self._cam, self._DVL, self._baro, self._ctrl_mode)
+        self._scenario.setup_scenario(self._rob, self._sonar, self._event_cam, self._cam, self._DVL, self._baro, self._ctrl_mode)
+
+
     def _on_post_reset_btn(self):
         """
         This function is attached to the Reset Button as the post_reset_fn callback.
@@ -438,6 +448,10 @@ class UIBuilder():
         self._use_camera = model
         print('Reload the scene for changes to take effect.')
 
+    def _on_event_camera_checkbox_click_fn(self, model):
+        self._use_event_camera = model
+        print('Reload the scene for changes to take effect.')
+
     def _on_DVL_checkbox_click_fn(self, model):
         self._use_DVL = model
         print('Reload the scene for changes to take effect.')
@@ -483,7 +497,7 @@ class UIBuilder():
             folder_button_title='Select txt',
             folder_dialog_title='Select the txt file containing the waypoint'
         )
-        self._scenario.setup_waypoints(
+        self._scenario.setup_waypoint_control(
             waypoint_path=self._waypoints_path, 
             default_waypoint_path=self._extension_path + '/demo/demo_waypoints.txt'
             )
@@ -491,7 +505,7 @@ class UIBuilder():
 
     def _on_waypoints_path_changed_fn(self, model):
         self._waypoints_path = model.get_value_as_string()
-        self._scenario.setup_waypoints(
+        self._scenario.setup_waypoint_control(
             waypoint_path=model.get_value_as_string(), 
             default_waypoint_path=self._extension_path + '/demo/demo_waypoints.txt'
             )
