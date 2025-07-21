@@ -20,6 +20,7 @@ from ...utils.GamePad import GamePad
 
 
 from carb.input import GamepadInput
+from typing import List # type: ignore
 
 
 class Sensor_Scenario():
@@ -34,6 +35,7 @@ class Sensor_Scenario():
         self._ctrl_mode = None
 
         self._running_scenario = False
+        self._controllers: List[GamePad | keyboard_cmd] = []
         self._time = 0.0
         self._controls = []
 
@@ -51,7 +53,7 @@ class Sensor_Scenario():
         if self._sonar:
             self._sonar.sonar_initialize(include_unlabelled = True)
         if self._ev_cam:
-            self._cam.initialize()
+            self._ev_cam.initialize()
         if self._cam:
             self._cam.initialize()
         if self._baro:
@@ -71,7 +73,8 @@ class Sensor_Scenario():
             case _:
                 # wtf .. do default control
                 self.setup_manual_control()
-                
+
+        self._controllers: List[GamePad | keyboard_cmd] = []
         self._running_scenario = True
 
 
@@ -110,6 +113,7 @@ class Sensor_Scenario():
                                     # row command (negative)
                                     "RIGHT": [10.0, 0.0, 0.0],
                                     })
+        self._controllers.append([self._force_cmd, self._torque_cmd])
 
 
 
@@ -130,6 +134,7 @@ class Sensor_Scenario():
 
     def setup_controller_control(self):
         self._gamepad = GamePad()
+        self._controllers.append(self._gamepad)
 
 
     def teardown_scenario(self):
@@ -142,12 +147,9 @@ class Sensor_Scenario():
             self._ev_cam.close()
 
         # release controllers
-        if self._force_cmd:
-            self._force_cmd.cleanup()
-        if self._torque_cmd:
-            self._torque_cmd.cleanup()
-        if self._gamepad:
-            self._gamepad.cleanup()
+        for controller in self._controllers:
+            controller.cleanup()
+
 
         self._rob = None
         self._sonar = None

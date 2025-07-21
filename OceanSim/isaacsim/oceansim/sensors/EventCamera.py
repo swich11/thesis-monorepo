@@ -65,7 +65,7 @@ class EventCamera(Camera):
         self._prim_path = prim_path
         self._res = resolution
         self._writing = False
-        super.__init__(prim_path, name, frequency, dt, resolution, position, translation, orientation, render_product_path)
+        super().__init__(prim_path, name, frequency, dt, resolution, position, translation, orientation, render_product_path)
 
 
     def __del__(self):
@@ -142,7 +142,8 @@ class EventCamera(Camera):
             }
             self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
 
-
+        # attach renderer
+        self._renderer = EventRenderer()
         print(f'[{self._name}] Initialized successfully. Data writing: {self._writing}')
 
 
@@ -160,29 +161,23 @@ class EventCamera(Camera):
             - Saves all to disk if writing_dir was specified
         """
         # TODO: import oceansim warp on hdr make warp kernel to turn data into events by interpolation, actually show event image
-        hdr_last = self._annot_dict["hdrColor"].data
         for key in self._annot_dict.keys():
             self._annot_dict[key].data = self._annot_dict[key][0].get_data()
         ldr = self._rgb_annotator.get_data() # from the Camera class
-        hdr_curr = self._annot_dict["hdrColor"].data
+        hdr_curr = self._annot_dict["HdrColor"].data
         
-        # testing
-        if hdr_last:
-            # test prints
-            print(hdr_curr.dtype)
-            print(hdr_curr)
-            event_frame = self.generate_event_frame(hdr_last, hdr_curr)
-            print(event_frame)
+
+        event_frame = self._renderer.render(hdr_curr)
 
 
         # TODO: add event data to viewport
 
         if ldr.size != 0: # probably don't need this check
             if self._viewport:
-                self._provider.set_image_data(ldr)
+                self._provider.set_image_data(event_frame)
 
             if self._writing:
-                self._writing_backend.schedule(write_np, path=f"RGB_image_{self._id}.png", data=ldr)
+                self._writing_backend.schedule(write_np, path=f"event_frame_{self._id}.png", data=ldr)
                 self._writing_backend.schedule()
                 print(f'[{self._name}] [{self._id}] rendered rgb image saved to {self._writing_backend.output_dir}')
                 
@@ -283,7 +278,6 @@ class EventCamera(Camera):
 
 
 
-# TODO: convert to use warp later
 class EventRenderer():
     def __init__(self, 
                  resolution = (346, 260),
@@ -292,17 +286,45 @@ class EventRenderer():
                  std: float = 0.05,):
         self._threshold_on = threshold_on
         self._threshold_off = threshold_off
-        self.pixel_store: np.ndarray = np.zeros(resolution, np.float32)
+        self.pixel_store: wp.array = wp.zeros(np.flip(resolution), wp.float32)
         self._noise_std = std
 
 
-    def render(self, hdrCurr: np.ndarray) -> np.ndarray:
+    def render(self, hdrCurr: wp.array) -> wp.array:
+        print(hdrCurr.shape)
+        print(type(hdrCurr))
+        hdrCurr = wp.tile_sum
+
+
+
+
         hdrCurr = np.sum(hdrCurr[:, :, :3], axis=2) # add luminance for each colour channel together
         hdrCurr = np.log10(hdrCurr) + np.random.normal(0, self._noise_std, hdrCurr.shape) # log scale and add threshold noise
         on_pixels = hdrCurr - self.pixel_store > self._threshold_on
         off_pixels = self.pixel_store - hdrCurr > self._threshold_off
         self.pixel_store = np.logical_and(on_pixels, off_pixels)*hdrCurr
-        return on_pixels*np.int8(1) - off_pixels*np.int8(1) # off pixels represented as -1
+        return on_pixels*np.array([255, 0, 0], dtype=np.uint8) + off_pixels*np.array([0, 0, 255], dtype=np.uint8) # on pixels as red and off pixels as blue
+    
+
+    @wp.func
+    def vec3_exp(exponent: wp.vec3):
+        return wp.vec3(wp.exp(exponent[0]), wp.exp(exponent[1]), wp.exp(exponent[2]), dtype=type(exponent[0]))
+    
+
+    @wp.kernel
+    def _render(hdr_curr: wp.array(ndim=3, dtype=wp.float32), 
+                hdr_last: wp.array(ndim=3, dtype=wp.float32),
+                depth_image: wp.array(ndim=2, dtype=wp.float32),
+                backscatter_value: wp.vec3,
+                atten_coeff: wp.vec3,
+                backscatter_coeff: wp.vec3,
+                frame_image: wp.array(ndim=3, dtype=wp.uint8)):
+        
+        exp_atten = vec3_exp(- depth * atten_coeff)
+        exp_back = vec3_exp(- depth * backscatter_coeff)
+        
+        
+
 
 
 
