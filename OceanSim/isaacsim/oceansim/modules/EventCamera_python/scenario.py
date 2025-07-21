@@ -146,6 +146,8 @@ class Sensor_Scenario():
             self._force_cmd.cleanup()
         if self._torque_cmd:
             self._torque_cmd.cleanup()
+        if self._gamepad:
+            self._gamepad.cleanup()
 
         self._rob = None
         self._sonar = None
