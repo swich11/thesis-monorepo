@@ -170,18 +170,14 @@ class EventCamera(Camera):
         event_frame = self._renderer.render(hdr_curr)
 
 
-        # TODO: add event data to viewport
-
-        if ldr.size != 0: # probably don't need this check
+        if hdr_curr.size != 0:
             if self._viewport:
-                self._provider.set_image_data(event_frame)
+                self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
 
             if self._writing:
-                self._writing_backend.schedule(write_np, path=f"event_frame_{self._id}.png", data=ldr)
-                self._writing_backend.schedule()
-                print(f'[{self._name}] [{self._id}] rendered rgb image saved to {self._writing_backend.output_dir}')
+                self._writing_backend.schedule(self.write_h5py, data=event_frame.numpy(), key="Events")
+                print(f'[{self._name}] [{self._id}] events saved to {self._writing_backend.output_dir}')
                 
-            
             self._id += 1
 
 
@@ -191,9 +187,7 @@ class EventCamera(Camera):
         """
         self.wrapped_ui_elements = []
         self.window = ui.Window(self._name, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
-
-        
-        self._provider = ui.ImageProvider() # TODO: make ui.ImageProvider for event camera images
+        self._provider = ui.ByteImageProvider()
         with self.window.frame:
             with ui.ZStack(height=self._resolution[1]):
                 ui.Rectangle(style={"background_color": 0xFF000000})
@@ -283,45 +277,95 @@ class EventRenderer():
                  resolution = (346, 260),
                  threshold_on: float = 0.143,
                  threshold_off: float = 0.225,
-                 std: float = 0.05,):
-        self._threshold_on = threshold_on
-        self._threshold_off = threshold_off
+                 std: float = 0.05,
+                 backscatter_value: wp.vec3f = wp.vec3f(0, 0, 0),
+                 atten_coeff: wp.vec3f = wp.vec3f(0, 0, 0),
+                 backscatter_coeff: wp.vec3f = wp.vec3f(0, 0, 0)):
+        log_val = np.log2(10)
+        self._threshold_on: wp.float32 = wp.float32(threshold_on*log_val) # shift thresholds to log2 space for computational efficiency
+        self._threshold_off: wp.float32 = wp.float32(threshold_off*log_val)
         self.pixel_store: wp.array = wp.zeros(np.flip(resolution), wp.float32)
-        self._noise_std = std
-
-
-    def render(self, hdrCurr: wp.array) -> wp.array:
-        print(hdrCurr.shape)
-        print(type(hdrCurr))
-        hdrCurr = wp.tile_sum
-
-
-
-
-        hdrCurr = np.sum(hdrCurr[:, :, :3], axis=2) # add luminance for each colour channel together
-        hdrCurr = np.log10(hdrCurr) + np.random.normal(0, self._noise_std, hdrCurr.shape) # log scale and add threshold noise
-        on_pixels = hdrCurr - self.pixel_store > self._threshold_on
-        off_pixels = self.pixel_store - hdrCurr > self._threshold_off
-        self.pixel_store = np.logical_and(on_pixels, off_pixels)*hdrCurr
-        return on_pixels*np.array([255, 0, 0], dtype=np.uint8) + off_pixels*np.array([0, 0, 255], dtype=np.uint8) # on pixels as red and off pixels as blue
-    
-
-    @wp.func
-    def vec3_exp(exponent: wp.vec3):
-        return wp.vec3(wp.exp(exponent[0]), wp.exp(exponent[1]), wp.exp(exponent[2]), dtype=type(exponent[0]))
-    
-
-    @wp.kernel
-    def _render(hdr_curr: wp.array(ndim=3, dtype=wp.float32), 
-                hdr_last: wp.array(ndim=3, dtype=wp.float32),
-                depth_image: wp.array(ndim=2, dtype=wp.float32),
-                backscatter_value: wp.vec3,
-                atten_coeff: wp.vec3,
-                backscatter_coeff: wp.vec3,
-                frame_image: wp.array(ndim=3, dtype=wp.uint8)):
+        self._noise_std: wp.float32 = wp.float32(std*log_val)
+        self._resolution = np.flip(resolution) # flip to nvidia annotator shape
+        self._backscatter_value: wp.vec3f = backscatter_value
+        self._atten_coeff: wp.vec3f = atten_coeff
+        self._backscatter_coeff: wp.vec3f = backscatter_coeff
         
-        exp_atten = vec3_exp(- depth * atten_coeff)
-        exp_back = vec3_exp(- depth * backscatter_coeff)
+
+    def render(self, hdrCurr: wp.array, depths: wp.array) -> wp.array:
+        frame_image = wp.zeros_like(hdrCurr)
+        wp.launch(
+            dim=self._resolution,
+            kernel=render,
+            inputs = [hdrCurr, self.pixel_store, depths, self._backscatter_value,
+                      self._atten_coeff, self._backscatter_coeff, self._threshold_on,
+                      self._threshold_off, self._noise_std],
+            outputs=[frame_image]
+        )
+        return frame_image
+
+
+
+# warp stuff
+
+
+@wp.func
+def vec3_exp(exponent: wp.vec3):
+    return wp.vec3(wp.exp(exponent[0]), wp.exp(exponent[1]), wp.exp(exponent[2]), dtype=type(exponent[0]))
+
+
+@wp.func
+def vec3_mul(vec_1: wp.vec3,
+            vec_2: wp.vec3):
+    return wp.vec3(vec_1[0] * vec_2[0], vec_1[1] * vec_2[1], vec_1[2] * vec_2[2], dtype=type(vec_1[0]))
+
+
+"""
+    Applies underwater backscatter and attenuation from oceansim to hdr frames to grab events also in a render frame
+"""
+@wp.kernel
+def render(hdr_curr: wp.array(ndim=3, dtype=wp.float32), 
+            pixel_last: wp.array(ndim=2, dtype=wp.float32),
+            depth_image: wp.array(ndim=2, dtype=wp.float32),
+            backscatter_value: wp.vec3,
+            atten_coeff: wp.vec3,
+            backscatter_coeff: wp.vec3,
+            threshold_on: wp.float32,
+            threshold_off: wp.float32,
+            std: wp.float32,
+            time: wp.uint32, # for random
+            frame_image: wp.array(ndim=3, dtype=wp.uint8)):
+    i, j  = wp.tid()
+    hdrNow = wp.vec3(hdr_curr[i, j, 0], hdr_curr[i, j, 1], hdr_curr[i, j, 2])
+    depth = depth_image[i, j]
+    exp_atten = vec3_exp(- depth * atten_coeff)
+    exp_back = vec3_exp(- depth * backscatter_coeff)
+    hdrAttenuated = vec3_mul(hdrNow, exp_atten) + vec3_mul(backscatter_value, (wp.vec3f(1.0, 1.0, 1.0) - exp_back))
+
+    pixelIntensity = wp.log2(hdrAttenuated[0] + hdrAttenuated[1] + hdrAttenuated[2]) + wp.randn(time + i + j)*std # add random threshold diff to the pixel value
+
+    # grab on and off pixels
+    on = pixelIntensity - pixel_last[i,j] > threshold_on
+    off = pixel_last[i,j] - pixelIntensity > threshold_off
+    pixel_last[i,j] = (on or off) * pixelIntensity
+
+    # save the output image for actual render
+    frame_image[i, j, 0] = 255 * on
+    frame_image[i, j, 2] = 255 * off
+
+
+    
+    
+
+
+
+
+
+
+
+
+
+
         
         
 
