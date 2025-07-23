@@ -1,8 +1,6 @@
 # Omniverse Import
 import omni.replicator.core as rep
 import omni.ui as ui
-from omni.replicator.core.scripts.functional import write_np
-
 
 # Isaac sim import
 from isaacsim.sensors.camera import Camera
@@ -17,12 +15,10 @@ from pathlib import Path
 
 
 from ..utils.TuplePair import TuplePair
-
+from isaacsim.oceansim.utils.UWrenderer_utils import EVrender
 
 # TODO: grab ground truth velocities
 # TODO: make output dataset path choosable
-# TODO: change event renderer to use warp
-# TODO: apply UW renderer to event camera renderer
 
 
 class EventCamera(Camera):
@@ -165,12 +161,10 @@ class EventCamera(Camera):
             self._annot_dict[key].data = self._annot_dict[key][0].get_data()
         ldr = self._rgb_annotator.get_data() # from the Camera class
         hdr_curr = self._annot_dict["HdrColor"].data
+        depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
         
-
-        event_frame = self._renderer.render(hdr_curr)
-
-
         if hdr_curr.size != 0:
+            event_frame = self._renderer.render(hdr_curr, depths)
             if self._viewport:
                 self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
 
@@ -215,7 +209,8 @@ class EventCamera(Camera):
             self._annot_dict[key][0].detach(self._render_product_path)
             rep.AnnotatorCache.clear(self._annot_dict[key][0])
 
-        self.close_h5py() # stop writing data
+        if self._writing:
+            self.close_h5py() # stop writing data
         if self._viewport:
             self.ui_destroy()
         
@@ -278,9 +273,9 @@ class EventRenderer():
                  threshold_on: float = 0.143,
                  threshold_off: float = 0.225,
                  std: float = 0.05,
-                 backscatter_value: wp.vec3f = wp.vec3f(0, 0, 0),
-                 atten_coeff: wp.vec3f = wp.vec3f(0, 0, 0),
-                 backscatter_coeff: wp.vec3f = wp.vec3f(0, 0, 0)):
+                 backscatter_value: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0),
+                 atten_coeff: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0),
+                 backscatter_coeff: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0)):
         log_val = np.log2(10)
         self._threshold_on: wp.float32 = wp.float32(threshold_on*log_val) # shift thresholds to log2 space for computational efficiency
         self._threshold_off: wp.float32 = wp.float32(threshold_off*log_val)
@@ -293,95 +288,15 @@ class EventRenderer():
         
 
     def render(self, hdrCurr: wp.array, depths: wp.array) -> wp.array:
-        frame_image = wp.zeros_like(hdrCurr)
+        frame_image = wp.zeros((260, 346, 4), dtype=wp.uint8)
         wp.launch(
             dim=self._resolution,
-            kernel=render,
-            inputs = [hdrCurr, self.pixel_store, depths, self._backscatter_value,
+            kernel=EVrender,
+            inputs=[hdrCurr, self.pixel_store, depths, self._backscatter_value,
                       self._atten_coeff, self._backscatter_coeff, self._threshold_on,
-                      self._threshold_off, self._noise_std],
-            outputs=[frame_image]
+                      self._threshold_off, self._noise_std, 1],  # time is for random standard deviation
+            outputs=[frame_image],
+
         )
         return frame_image
-
-
-
-# warp stuff
-
-
-@wp.func
-def vec3_exp(exponent: wp.vec3):
-    return wp.vec3(wp.exp(exponent[0]), wp.exp(exponent[1]), wp.exp(exponent[2]), dtype=type(exponent[0]))
-
-
-@wp.func
-def vec3_mul(vec_1: wp.vec3,
-            vec_2: wp.vec3):
-    return wp.vec3(vec_1[0] * vec_2[0], vec_1[1] * vec_2[1], vec_1[2] * vec_2[2], dtype=type(vec_1[0]))
-
-
-"""
-    Applies underwater backscatter and attenuation from oceansim to hdr frames to grab events also in a render frame
-"""
-@wp.kernel
-def render(hdr_curr: wp.array(ndim=3, dtype=wp.float32), 
-            pixel_last: wp.array(ndim=2, dtype=wp.float32),
-            depth_image: wp.array(ndim=2, dtype=wp.float32),
-            backscatter_value: wp.vec3,
-            atten_coeff: wp.vec3,
-            backscatter_coeff: wp.vec3,
-            threshold_on: wp.float32,
-            threshold_off: wp.float32,
-            std: wp.float32,
-            time: wp.uint32, # for random
-            frame_image: wp.array(ndim=3, dtype=wp.uint8)):
-    i, j  = wp.tid()
-    hdrNow = wp.vec3(hdr_curr[i, j, 0], hdr_curr[i, j, 1], hdr_curr[i, j, 2])
-    depth = depth_image[i, j]
-    exp_atten = vec3_exp(- depth * atten_coeff)
-    exp_back = vec3_exp(- depth * backscatter_coeff)
-    hdrAttenuated = vec3_mul(hdrNow, exp_atten) + vec3_mul(backscatter_value, (wp.vec3f(1.0, 1.0, 1.0) - exp_back))
-
-    pixelIntensity = wp.log2(hdrAttenuated[0] + hdrAttenuated[1] + hdrAttenuated[2]) + wp.randn(time + i + j)*std # add random threshold diff to the pixel value
-
-    # grab on and off pixels
-    on = pixelIntensity - pixel_last[i,j] > threshold_on
-    off = pixel_last[i,j] - pixelIntensity > threshold_off
-    pixel_last[i,j] = (on or off) * pixelIntensity
-
-    # save the output image for actual render
-    frame_image[i, j, 0] = 255 * on
-    frame_image[i, j, 2] = 255 * off
-
-
-    
-    
-
-
-
-
-
-
-
-
-
-
-        
-        
-
-
-
-
-        
-        
-
-
-
-
-
-
-
-
-
-
 
