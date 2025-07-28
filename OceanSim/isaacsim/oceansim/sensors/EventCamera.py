@@ -157,7 +157,6 @@ class EventCamera(Camera):
             - Updates viewport display if enabled
             - Saves all to disk if writing_dir was specified
         """
-        # TODO: import oceansim warp on hdr make warp kernel to turn data into events by interpolation, actually show event image
         for key in self._annot_dict.keys():
             self._annot_dict[key].data = self._annot_dict[key][0].get_data()
         ldr = self._rgb_annotator.get_data() # from the Camera class
@@ -167,10 +166,14 @@ class EventCamera(Camera):
         if hdr_curr.size != 0:
             event_frame = self._renderer.render(hdr_curr, depths)
             if self._viewport:
-                print(self._annot_dict["Depths"].data)
+                # convert depth map values to grayscale image in rgba format
+                depth_image = np.clip(np.nan_to_num(self._annot_dict["Depths"].data.numpy(), nan=0.0), 0.0, 20.0)
+                depth_image = np.stack([np.uint8(depth_image / 20.0 * 255)]*3 + [np.ones_like(depth_image)*255], axis=2)
+
+
                 self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
-                # need to normalise the data to produce a gray scale image from depths
-                self._depth_provider.set_bytes_data_from_gpu(self._annot_dict["Depths"].data.ptr, self.get_resolution(), TextureFormat.R8_UNORM)
+                # need to normalise the data to produce a gray scale image from depth
+                self._depth_provider.set_data_array(depth_image, self.get_resolution())
 
             if self._writing:
                 # write all the data required from the renderer -> need to include base velocities here
@@ -289,7 +292,6 @@ class EventCamera(Camera):
             elem.destroy()
 
 
-
     def open_h5py(self, path: str):
         """Create the h5py dataset on path. Destroys dataset if it already exists.
         
@@ -307,8 +309,6 @@ class EventCamera(Camera):
                                                                 compression="lzf",        
             ) # this will autochunk and autocompress
                                         
-
-
 
     def write_h5py(self, data: wp.array, key: str):
         """Write numpy array to h5py file format. The key defines the dataset group to store into.
