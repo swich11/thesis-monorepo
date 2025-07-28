@@ -6,7 +6,8 @@ import warp as wp
 from omni.kit.viewport.utility import get_active_viewport
 
 # Custom import
-from isaacsim.oceansim.utils.UWrenderer_utils import UW_render
+from isaacsim.oceansim.render.UWRenderer import gpu_render
+
 
 class Colorpicker_Scenario():
     def __init__(self):
@@ -82,7 +83,7 @@ class Colorpicker_Scenario():
                 self.uw_image = wp.zeros_like(self.raw_rgba)
                 wp.launch(
                     dim=(self.raw_rgba.shape[0], self.raw_rgba.shape[1]),
-                    kernel=UW_render,
+                    kernel=gpu_render,
                     inputs=[
                         self.raw_rgba,
                         self.depth_image,

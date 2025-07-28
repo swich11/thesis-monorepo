@@ -14,8 +14,11 @@ import carb
 import h5py
 from pathlib import Path
 
-from ..utils.TuplePair import TuplePair
-from isaacsim.oceansim.utils.UWrenderer_utils import EVrender
+
+from isaacsim.oceansim.utils.TuplePair import TuplePair
+from isaacsim.oceansim.render.EventRenderer import EventRenderer
+
+
 
 # TODO: grab ground truth velocities (prims.get_velocities (need to find the rigid body prim on the camera class))
 # TODO: make output dataset path choosable
@@ -325,43 +328,4 @@ class EventCamera(Camera):
         Returns -> None
         """
         file.close()
-
-
-class EventRenderer():
-    def __init__(self, 
-                 resolution = (346, 260),
-                 threshold_on: float = 0.143,
-                 threshold_off: float = 0.225,
-                 std: float = 0.05,
-                 backscatter_value: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0),
-                 atten_coeff: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0),
-                 backscatter_coeff: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0)):
-        log_val = np.log2(10)
-        self._threshold_on: wp.float32 = wp.float32(threshold_on*log_val) # shift thresholds to log2 space for computational efficiency
-        self._threshold_off: wp.float32 = wp.float32(threshold_off*log_val)
-        self.pixel_store: wp.array = wp.zeros(np.flip(resolution), wp.float32)
-        self._noise_std: wp.float32 = wp.float32(std*log_val)
-        self._resolution = np.flip(resolution) # flip to nvidia annotator shape
-        self._backscatter_value: wp.vec3f = backscatter_value
-        self._atten_coeff: wp.vec3f = atten_coeff
-        self._backscatter_coeff: wp.vec3f = backscatter_coeff
-        
-        self._generator = np.random.default_rng(seed=42) # random number generator
-        
-
-    def render(self, hdrCurr: wp.array, depths: wp.array) -> wp.array:
-        seed = self._generator.integers(2**32, dtype=np.uint32) # grab a random seed
-        frame_image = wp.zeros((260, 346, 4), dtype=wp.uint8)
-        wp.launch(
-            dim=self._resolution,
-            kernel=EVrender,
-            inputs=[hdrCurr, self.pixel_store, depths, self._backscatter_value,
-                      self._atten_coeff, self._backscatter_coeff, self._threshold_on,
-                      self._threshold_off, self._noise_std, seed],  # time is for random standard deviation
-            outputs=[frame_image],
-
-        )
-        return frame_image
-
-    
 

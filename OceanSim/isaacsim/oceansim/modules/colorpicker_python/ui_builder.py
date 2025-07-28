@@ -18,7 +18,9 @@ from isaacsim.core.utils.extensions import get_extension_path
 
 # Custom import
 from .scenario import Colorpicker_Scenario
-from isaacsim.oceansim.utils.UWrenderer_utils import UW_render
+from isaacsim.oceansim.render.UWRenderer import gpu_render
+
+
 from .global_variables import EXTENSION_DESCRIPTION, EXTENSION_TITLE, EXTENSION_LINK
 
 
@@ -351,7 +353,7 @@ class UIBuilder:
             self._uw_image = wp.zeros_like(self._demo_rgba)
             wp.launch(
                 dim=np.flip(self._demo_res),
-                kernel=UW_render,
+                kernel=gpu_render,
                 inputs=[
                     self._demo_rgba,
                     self._demo_depth,
