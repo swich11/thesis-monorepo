@@ -22,6 +22,9 @@ from isaacsim.oceansim.utils.UWrenderer_utils import EVrender
 # TODO: create all viewports and make them viewable (do not change outputs quite yet)
 
 
+# this is already an xform prim
+
+
 class EventCamera(Camera):
     def __init__(self,
                  prim_path,
@@ -166,7 +169,7 @@ class EventCamera(Camera):
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
         
         if hdr_curr.size != 0:
-            event_frame = self._renderer.render(hdr_curr, depths, self._id)
+            event_frame = self._renderer.render(hdr_curr, depths)
             if self._viewport:
                 self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
 
@@ -330,15 +333,18 @@ class EventRenderer():
         self._atten_coeff: wp.vec3f = atten_coeff
         self._backscatter_coeff: wp.vec3f = backscatter_coeff
         
+        self._generator = np.random.default_rng(seed=42) # random number generator
+        
 
-    def render(self, hdrCurr: wp.array, depths: wp.array, frame_id: wp.uint32) -> wp.array:
+    def render(self, hdrCurr: wp.array, depths: wp.array) -> wp.array:
+        seed = self._generator.integers(2**32, dtype=np.uint32) # grab a random seed
         frame_image = wp.zeros((260, 346, 4), dtype=wp.uint8)
         wp.launch(
             dim=self._resolution,
             kernel=EVrender,
             inputs=[hdrCurr, self.pixel_store, depths, self._backscatter_value,
                       self._atten_coeff, self._backscatter_coeff, self._threshold_on,
-                      self._threshold_off, self._noise_std, frame_id],  # time is for random standard deviation
+                      self._threshold_off, self._noise_std, seed],  # time is for random standard deviation
             outputs=[frame_image],
 
         )

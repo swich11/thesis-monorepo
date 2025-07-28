@@ -5,10 +5,12 @@ import warp as wp
 def vec3_exp(exponent: wp.vec3):
     return wp.vec3(wp.exp(exponent[0]), wp.exp(exponent[1]), wp.exp(exponent[2]), dtype=type(exponent[0]))
 
+
 @wp.func
 def vec3_mul(vec_1: wp.vec3,
             vec_2: wp.vec3):
     return wp.vec3(vec_1[0] * vec_2[0], vec_1[1] * vec_2[1], vec_1[2] * vec_2[2], dtype=type(vec_1[0]))
+
 
 @wp.kernel
 def UW_render(raw_image: wp.array(ndim=3, dtype=wp.uint8),
@@ -26,7 +28,7 @@ def UW_render(raw_image: wp.array(ndim=3, dtype=wp.uint8),
     uw_image[i,j,0] = wp.uint8(wp.clamp(UW_RGB[0], wp.float32(0), wp.float32(255)))
     uw_image[i,j,1] = wp.uint8(wp.clamp(UW_RGB[1], wp.float32(0), wp.float32(255)))
     uw_image[i,j,2] = wp.uint8(wp.clamp(UW_RGB[2], wp.float32(0), wp.float32(255)))
-    uw_image[i,j,3] = raw_image[i,j,3]
+    uw_image[i,j,3] = raw_image[i, j, 3]
 
 
 @wp.kernel
@@ -50,7 +52,8 @@ def EVrender(hdr_curr: wp.array(ndim=3, dtype=wp.float16),
 
     # sum pixel intensities and add random noise
     pixelIntensity = (wp.log2(hdrAttenuated[0] + hdrAttenuated[1] + hdrAttenuated[2]) 
-                    + wp.float32(wp.randn(seed + wp.uint32(i) + (wp.uint32(2)**wp.uint32(16))*wp.uint32(j)))*std)
+                    + wp.float32(wp.randn(seed + wp.uint32(i) 
+                               + wp.uint32(j)*wp.uint32(wp.pow(2.0, 16.0))))*std)
 
     # grab on and off pixels
     on = pixelIntensity - pixel_last[i,j] > threshold_on
