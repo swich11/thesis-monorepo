@@ -22,9 +22,6 @@ from isaacsim.oceansim.utils.UWrenderer_utils import EVrender
 # TODO: create all viewports and make them viewable (do not change outputs quite yet)
 
 
-# this is already an xform prim
-
-
 class EventCamera(Camera):
     def __init__(self,
                  prim_path,
@@ -33,8 +30,8 @@ class EventCamera(Camera):
                  dt = None,
                  resolution = (346, 260),
                  position = None,
-                 translation = None,
                  orientation = None,
+                 translation = None,
                  render_product_path = None,):
         """Initialize an event camera sensor.
     
@@ -65,11 +62,7 @@ class EventCamera(Camera):
         self._prim_path = prim_path
         self._res = resolution
         self._writing = False
-        super().__init__(prim_path, name, frequency, dt, resolution, position, translation, orientation, render_product_path)
-
-
-    def __del__(self):
-        self.close()
+        super().__init__(prim_path, name, frequency, dt, resolution, position, orientation, translation, render_product_path)
 
 
     def initialize(self,
