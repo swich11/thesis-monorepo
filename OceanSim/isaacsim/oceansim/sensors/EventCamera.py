@@ -1,6 +1,7 @@
 # Omniverse Import
 import omni.replicator.core as rep
 import omni.ui as ui
+from omni.gpu_foundation_factory._gpu_foundation_factory import TextureFormat
 
 # Isaac sim import
 from isaacsim.sensors.camera import Camera
@@ -12,7 +13,6 @@ import yaml
 import carb
 import h5py
 from pathlib import Path
-
 
 from ..utils.TuplePair import TuplePair
 from isaacsim.oceansim.utils.UWrenderer_utils import EVrender
@@ -164,7 +164,10 @@ class EventCamera(Camera):
         if hdr_curr.size != 0:
             event_frame = self._renderer.render(hdr_curr, depths)
             if self._viewport:
+                print(self._annot_dict["Depths"].data)
                 self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
+                # need to normalise the data to produce a gray scale image from depths
+                self._depth_provider.set_bytes_data_from_gpu(self._annot_dict["Depths"].data.ptr, self.get_resolution(), TextureFormat.R8_UNORM)
 
             if self._writing:
                 # write all the data required from the renderer -> need to include base velocities here
@@ -198,6 +201,23 @@ class EventCamera(Camera):
         self.wrapped_ui_elements.append(image_provider)
         self.wrapped_ui_elements.append(self._provider)
         self.wrapped_ui_elements.append(evcam_window)
+        
+        depths_window = ui.Window("Depths", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        self._depth_provider = ui.ByteImageProvider()
+        with depths_window.frame:
+            with ui.ZStack(height=self._resolution[1]):
+                ui.Rectangle(style={"background_color": 0xFF000000})
+                ui.Label('Run the scenario for events to be received',
+                         style={'font_size': 55,'alignment': ui.Alignment.CENTER},
+                         word_wrap=True)
+                depth_provider = ui.ImageWithProvider(self._depth_provider, width=self._resolution[0], 
+                                                      height=self._resolution[1], 
+                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
+                                                      'alignment' :ui.Alignment.CENTER})
+        self.wrapped_ui_elements.append(depths_window)
+        self.wrapped_ui_elements.append(self._depth_provider)
+        self.wrapped_ui_elements.append(depth_provider)
+
 
 
     def make_image_viewport(self, key: str):

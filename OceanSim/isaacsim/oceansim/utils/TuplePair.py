@@ -1,12 +1,12 @@
-import numpy as np
+import warp as wp
 
 
 class TuplePair():
     """Tuple pair has type (tuple, data: any) where data is readable and writable
     """
-    def __init__(self, t: tuple, data:np.ndarray = None):
+    def __init__(self, t: tuple, data:wp.array = None):
         self._t = t
-        self.data: np.ndarray = data
+        self.data: wp.array = data
 
     
     # get item from tuple
