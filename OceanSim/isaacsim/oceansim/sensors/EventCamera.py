@@ -266,7 +266,6 @@ class EventCamera(Camera):
         file.close()
 
 
-
 class EventRenderer():
     def __init__(self, 
                  resolution = (346, 260),
@@ -294,7 +293,7 @@ class EventRenderer():
             kernel=EVrender,
             inputs=[hdrCurr, self.pixel_store, depths, self._backscatter_value,
                       self._atten_coeff, self._backscatter_coeff, self._threshold_on,
-                      self._threshold_off, self._noise_std, 1],  # time is for random standard deviation
+                      self._threshold_off, self._noise_std, self._id],  # time is for random standard deviation
             outputs=[frame_image],
 
         )
