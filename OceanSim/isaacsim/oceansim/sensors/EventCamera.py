@@ -19,6 +19,7 @@ from isaacsim.oceansim.utils.UWrenderer_utils import EVrender
 
 # TODO: grab ground truth velocities (prims.get_velocities (need to find the rigid body prim on the camera class))
 # TODO: make output dataset path choosable
+# TODO: create all viewports and make them viewable (do not change outputs quite yet)
 
 
 class EventCamera(Camera):
@@ -171,6 +172,7 @@ class EventCamera(Camera):
 
             if self._writing:
                 # write all the data required from the renderer -> need to include base velocities here
+                # need to add sim times here aswell
                 self._writing_backend.schedule(self.write_h5py, data=event_frame, key="Events")
                 self._writing_backend.schedule(self.write_h5py, data=self._annot_dict["Depths"].data, key="Depths")
                 self._writing_backend.schedule(self.write_h5py, data=self._annot_dict["MotionFlow"].data, key="MotionFlow")
@@ -181,12 +183,13 @@ class EventCamera(Camera):
 
     def make_viewport(self):
         """
-            Create a viewport for real-time visualization of accumulated events as frames.
+            Create a viewport for real-time visualization of events as frames.
         """
         self.wrapped_ui_elements = []
-        self.window = ui.Window(self._name, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        evcam_window = ui.Window(self._name, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
         self._provider = ui.ByteImageProvider()
-        with self.window.frame:
+        # event window
+        with evcam_window.frame:
             with ui.ZStack(height=self._resolution[1]):
                 ui.Rectangle(style={"background_color": 0xFF000000})
                 ui.Label('Run the scenario for events to be received',
@@ -198,7 +201,44 @@ class EventCamera(Camera):
                                                       'alignment' :ui.Alignment.CENTER})
         self.wrapped_ui_elements.append(image_provider)
         self.wrapped_ui_elements.append(self._provider)
-        self.wrapped_ui_elements.append(self.window)
+        self.wrapped_ui_elements.append(evcam_window)
+
+
+    def make_image_viewport(self, key: str):
+        window = ui.Window(key, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        self._providers[key] = ui.ByteImageProvider()
+        with window.frame:
+            with ui.ZStack(height=self._resolution[1]):
+                ui.Rectangle(style={"background_color": 0xFF000000})
+                ui.Label('Run the scenario for data to be received',
+                         style={'font_size': 55, 'alignment': ui.Alignment.CENTER},
+                         word_wrap=True)
+                image_provider = ui.ImageWithProvider(self._providers[key], 
+                                                      width=self._resolution[0],
+                                                      height=self._resolution[1],
+                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
+                                                      'alignment' :ui.Alignment.CENTER})
+        self.wrapped_ui_elements.append(self._providers[key])
+        self.wrapped_ui_elements.append(image_provider)
+        self.wrapped_ui_elements.append(window)
+
+
+    def make_graph_viewport(self, key: str):
+        # TODO: make this a thing for 6-DOF IMU and 6-DOF velocities
+        pass
+
+
+    def make_viewports(self) -> None:
+        # these are automatically used by viewport makers
+        self._wrapped_ui_elements = []
+        self._providers = {}
+
+        self.make_image_viewport("Events")
+        self.make_image_viewport("Depths")
+        self.make_image_viewport("MotionFlow")
+
+        self.make_graph_viewport("IMU")
+        self.make_graph_viewport("Velocities")
 
 
     def close(self):
