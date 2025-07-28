@@ -1,6 +1,0 @@
-*.pt
-*.pyc
-__pycache__/
-/output
-/videos/*
-weights/*
