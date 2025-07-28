@@ -17,7 +17,7 @@ from pathlib import Path
 from ..utils.TuplePair import TuplePair
 from isaacsim.oceansim.utils.UWrenderer_utils import EVrender
 
-# TODO: grab ground truth velocities
+# TODO: grab ground truth velocities (prims.get_velocities (need to find the rigid body prim on the camera class))
 # TODO: make output dataset path choosable
 
 
@@ -170,7 +170,10 @@ class EventCamera(Camera):
                 self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
 
             if self._writing:
-                self._writing_backend.schedule(self.write_h5py, data=event_frame.numpy(), key="Events")
+                # write all the data required from the renderer -> need to include base velocities here
+                self._writing_backend.schedule(self.write_h5py, data=event_frame, key="Events")
+                self._writing_backend.schedule(self.write_h5py, data=self._annot_dict["Depths"].data, key="Depths")
+                self._writing_backend.schedule(self.write_h5py, data=self._annot_dict["MotionFlow"].data, key="MotionFlow")
                 print(f'[{self._name}] [{self._id}] events saved to {self._writing_backend.output_dir}')
                 
             self._id += 1
@@ -248,11 +251,12 @@ class EventCamera(Camera):
 
 
 
-    def write_h5py(self, data: np.ndarray, key: str):
+    def write_h5py(self, data: wp.array, key: str):
         """Write numpy array to h5py file format. The key defines the dataset group to store into.
 
         Returns -> None
         """
+        data: np.ndarray = data.numpy()  # convert to numpy array
         dset: h5py.Dataset = self._write_dict[key].data
         dset.resize(tuple([dset.shape[0] + 1]) + dset.shape[1:len(dset.shape)]) # add 1 to dataset shape
         dset[-1] = data
