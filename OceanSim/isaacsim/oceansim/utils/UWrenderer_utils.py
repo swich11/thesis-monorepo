@@ -42,13 +42,15 @@ def EVrender(hdr_curr: wp.array(ndim=3, dtype=wp.float16),
             seed: wp.uint32, # for random
             frame_image: wp.array(ndim=3, dtype=wp.uint8)):
     i, j  = wp.tid()
+    # attenuation from oceansim
     hdrNow = wp.vec3(wp.float32(hdr_curr[i, j, 0]), wp.float32(hdr_curr[i, j, 1]), wp.float32(hdr_curr[i, j, 2]))
     exp_atten = vec3_exp(- depth_image[i, j] * atten_coeff)
     exp_back = vec3_exp(- depth_image[i, j] * backscatter_coeff)
     hdrAttenuated = vec3_mul(hdrNow, exp_atten) + vec3_mul(backscatter_value, (wp.vec3f(1.0, 1.0, 1.0) - exp_back))
 
+    # sum pixel intensities and add random noise
     pixelIntensity = (wp.log2(hdrAttenuated[0] + hdrAttenuated[1] + hdrAttenuated[2]) 
-                    + wp.float32(wp.randn(seed + wp.uint32(i) + (wp.uint32(2)**wp.uint32(16))*wp.uint32(j)))*std) # add random threshold diff to the pixel value
+                    + wp.float32(wp.randn(seed + wp.uint32(i) + (wp.uint32(2)**wp.uint32(16))*wp.uint32(j)))*std)
 
     # grab on and off pixels
     on = pixelIntensity - pixel_last[i,j] > threshold_on

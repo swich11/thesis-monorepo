@@ -89,7 +89,7 @@ class EventCamera(Camera):
             physics_sim_view (_type_, optional): _description_. Defaults to None.            
 
         """
-        self._id = 0
+        self._id: int = 0
         self._viewport = viewport
         self._device = wp.get_preferred_device()
         super().initialize(physics_sim_view)
@@ -99,19 +99,22 @@ class EventCamera(Camera):
                 try:
                     # Load the YAML content
                     yaml_content = yaml.safe_load(file)
-                    self._backscatter_value = wp.vec3f(*yaml_content['backscatter_value'])
-                    self._atten_coeff = wp.vec3f(*yaml_content['atten_coeff'])
-                    self._backscatter_coeff = wp.vec3f(*yaml_content['backscatter_coeff'])
+                    backscatter_value = wp.vec3f(*yaml_content['backscatter_value'])
+                    attenuation_coeff = wp.vec3f(*yaml_content['atten_coeff'])
+                    backscatter_coeff = wp.vec3f(*yaml_content['backscatter_coeff'])
                     print(f"[{self._name}] On {str(self._device)}. Using loaded render parameters:")
                     print(f"[{self._name}] Render parameters: {yaml_content}")
                 except yaml.YAMLError as exc:
                     carb.log_error(f"[{self._name}] Error reading YAML file: {exc}")
         else:
-            self._backscatter_value = wp.vec3f(*UW_param[0:3])
-            self._atten_coeff = wp.vec3f(*UW_param[6:9])
-            self._backscatter_coeff = wp.vec3f(*UW_param[3:6])
+            backscatter_value = wp.vec3f(*UW_param[0:3])
+            attenuation_coeff = wp.vec3f(*UW_param[6:9])
+            backscatter_coeff = wp.vec3f(*UW_param[3:6])
             print(f'[{self._name}] On {str(self._device)}. Using default render parameters.')
 
+        self._renderer = EventRenderer(backscatter_value=backscatter_value,
+                                       atten_coeff=attenuation_coeff,
+                                       backscatter_coeff=backscatter_coeff)
 
         # Add event annotators here
         self._annot_dict = {
@@ -138,8 +141,6 @@ class EventCamera(Camera):
             }
             self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
 
-        # attach renderer
-        self._renderer = EventRenderer()
         print(f'[{self._name}] Initialized successfully. Data writing: {self._writing}')
 
 
@@ -164,7 +165,7 @@ class EventCamera(Camera):
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
         
         if hdr_curr.size != 0:
-            event_frame = self._renderer.render(hdr_curr, depths)
+            event_frame = self._renderer.render(hdr_curr, depths, self._id)
             if self._viewport:
                 self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
 
@@ -286,16 +287,18 @@ class EventRenderer():
         self._backscatter_coeff: wp.vec3f = backscatter_coeff
         
 
-    def render(self, hdrCurr: wp.array, depths: wp.array) -> wp.array:
+    def render(self, hdrCurr: wp.array, depths: wp.array, frame_id: wp.uint32) -> wp.array:
         frame_image = wp.zeros((260, 346, 4), dtype=wp.uint8)
         wp.launch(
             dim=self._resolution,
             kernel=EVrender,
             inputs=[hdrCurr, self.pixel_store, depths, self._backscatter_value,
                       self._atten_coeff, self._backscatter_coeff, self._threshold_on,
-                      self._threshold_off, self._noise_std, self._id],  # time is for random standard deviation
+                      self._threshold_off, self._noise_std, frame_id],  # time is for random standard deviation
             outputs=[frame_image],
 
         )
         return frame_image
+
+    
 
