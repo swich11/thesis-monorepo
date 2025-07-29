@@ -46,7 +46,7 @@ class EventRenderer(Renderer):
                  resolution = (346, 260),
                  threshold_on: float = 0.143,
                  threshold_off: float = 0.225,
-                 std: float = 0.05,
+                 std: float = 0.03,
                  backscatter_value: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0),
                  atten_coeff: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0),
                  backscatter_coeff: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0)):

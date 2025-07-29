@@ -9,6 +9,7 @@ from isaacsim.sensors.camera import Camera
 
 import numpy as np
 import warp as wp
+import cv2
 import yaml
 import carb
 import h5py
@@ -170,6 +171,13 @@ class EventCamera(Camera):
                 depth_image = np.clip(np.nan_to_num(self._annot_dict["Depths"].data.numpy(), nan=0.0), 0.0, 20.0)
                 depth_image = np.stack([np.uint8(depth_image / 20.0 * 255)]*3 + [np.ones_like(depth_image)*255], axis=2)
 
+                motion_flow = self._annot_dict["MotionFlow"].data.numpy()
+                print(type(motion_flow))
+                print(motion_flow.shape) # flow in x direction and y direction
+
+                # set x
+
+
 
                 self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
                 # need to normalise the data to produce a gray scale image from depth
@@ -184,6 +192,16 @@ class EventCamera(Camera):
                 print(f'[{self._name}] [{self._id}] events saved to {self._writing_backend.output_dir}')
                 
             self._id += 1
+
+
+    def draw_motion_flow(self, flow: np.ndarray) -> np.ndarray:
+        output = np.zeros((self._res[0], self._res[1], 4))
+        for i in range(0, self._res[0] - 12, 12):
+            for j in range(0, self._res[1] - 12, 12):
+                average = np.uint8(np.average(flow[i:(i+12), j:(j+12)], axis=(1, 0)))
+                cv2.arrowedLine(output, (j + 6, i + 6), (j + 6 + average[0], i + 6 + average[1]), 
+                                color=(255, 255, 255, 255), thickness=1, tipLength=0.3)
+        return output
 
 
     def make_viewport(self):
