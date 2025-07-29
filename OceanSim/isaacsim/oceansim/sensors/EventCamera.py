@@ -21,7 +21,7 @@ from isaacsim.oceansim.render.EventRenderer import EventRenderer
 
 
 
-# TODO: grab ground truth velocities (prims.get_velocities (need to find the rigid body prim on the camera class))
+# TODO: grab ground truth velocities (there is no physics prim on the robot -> grab local pose and use this between frames for now)
 # TODO: make output dataset path choosable
 # TODO: create all viewports and make them viewable (do not change outputs quite yet)
 
@@ -129,6 +129,11 @@ class EventCamera(Camera):
         for key in self._annot_dict.keys():
             self._annot_dict[key][0].attach(self._render_product_path)
 
+        # velocity inference because there is no physics sim
+        self.last_trans_pos: np.ndarray = np.array([0.0, 0.0, 0.0])
+        self.last_quat_pos: np.ndarray = np.array([1.0, 0.0, 0.0, 0.0])
+        self.last_time = self._previous_time # gets the current time of the sim when the camera is launched
+
         if self._viewport:
             self.make_viewport()
 
@@ -163,6 +168,14 @@ class EventCamera(Camera):
         ldr = self._rgb_annotator.get_data() # from the Camera class
         hdr_curr = self._annot_dict["HdrColor"].data
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
+
+        # calculate camera prim velocity (this is the stupidest thing ever, but the robot doesn't have physics)
+        pose = self.get_world_pose()
+
+        lin_diff = pose[0] - self.last_trans_pos    # xyz world translation
+        quat_diff = pose[1] - self.last_quat_pos    # quarternion world orientation
+
+
         
         if hdr_curr.size != 0:
             event_frame = self._renderer.render(hdr_curr, depths)
