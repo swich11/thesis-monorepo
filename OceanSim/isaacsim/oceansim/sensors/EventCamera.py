@@ -168,20 +168,19 @@ class EventCamera(Camera):
             event_frame = self._renderer.render(hdr_curr, depths)
             if self._viewport:
                 # convert depth map values to grayscale image in rgba format
+                # probably run these async
                 depth_image = np.clip(np.nan_to_num(self._annot_dict["Depths"].data.numpy(), nan=0.0), 0.0, 20.0)
                 depth_image = np.stack([np.uint8(depth_image / 20.0 * 255)]*3 + [np.ones_like(depth_image)*255], axis=2)
 
                 motion_flow = self._annot_dict["MotionFlow"].data.numpy()
-                print(type(motion_flow))
-                print(motion_flow.shape) # flow in x direction and y direction
+                motion_flow_image = self.draw_motion_flow(motion_flow[:, :, 0:2]) # only need the x and y flow
+                #
 
-                # set x
+                res = self.get_resolution()
+                self._provider.set_bytes_data_from_gpu(event_frame.ptr, res)
+                self._depth_provider.set_data_array(depth_image, res)
+                self._flow_provider.set_data_array(motion_flow_image, res)
 
-
-
-                self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
-                # need to normalise the data to produce a gray scale image from depth
-                self._depth_provider.set_data_array(depth_image, self.get_resolution())
 
             if self._writing:
                 # write all the data required from the renderer -> need to include base velocities here
@@ -195,11 +194,12 @@ class EventCamera(Camera):
 
 
     def draw_motion_flow(self, flow: np.ndarray) -> np.ndarray:
-        output = np.zeros((self._res[0], self._res[1], 4))
+        output = np.zeros((self._res[1], self._res[0], 4), dtype=np.uint8)
+        output[:, :, 3] = 255
         for i in range(0, self._res[0] - 12, 12):
             for j in range(0, self._res[1] - 12, 12):
-                average = np.uint8(np.average(flow[i:(i+12), j:(j+12)], axis=(1, 0)))
-                cv2.arrowedLine(output, (j + 6, i + 6), (j + 6 + average[0], i + 6 + average[1]), 
+                average = np.int8(np.average(flow[j:(j+12), i:(i+12)], axis=(1, 0)))
+                cv2.arrowedLine(output, (i + 6, j + 6), (i + 6 + average[0], j + 6 + average[1]), 
                                 color=(255, 255, 255, 255), thickness=1, tipLength=0.3)
         return output
 
@@ -209,9 +209,9 @@ class EventCamera(Camera):
             Create a viewport for real-time visualization of events as frames.
         """
         self.wrapped_ui_elements = []
+        # event window
         evcam_window = ui.Window(self._name, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
         self._provider = ui.ByteImageProvider()
-        # event window
         with evcam_window.frame:
             with ui.ZStack(height=self._resolution[1]):
                 ui.Rectangle(style={"background_color": 0xFF000000})
@@ -225,13 +225,13 @@ class EventCamera(Camera):
         self.wrapped_ui_elements.append(image_provider)
         self.wrapped_ui_elements.append(self._provider)
         self.wrapped_ui_elements.append(evcam_window)
-        
+        # depth window
         depths_window = ui.Window("Depths", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
         self._depth_provider = ui.ByteImageProvider()
         with depths_window.frame:
             with ui.ZStack(height=self._resolution[1]):
                 ui.Rectangle(style={"background_color": 0xFF000000})
-                ui.Label('Run the scenario for events to be received',
+                ui.Label('Run the scenario for depths to be received',
                          style={'font_size': 55,'alignment': ui.Alignment.CENTER},
                          word_wrap=True)
                 depth_provider = ui.ImageWithProvider(self._depth_provider, width=self._resolution[0], 
@@ -241,7 +241,22 @@ class EventCamera(Camera):
         self.wrapped_ui_elements.append(depths_window)
         self.wrapped_ui_elements.append(self._depth_provider)
         self.wrapped_ui_elements.append(depth_provider)
-
+        # motion flow window
+        flow_window = ui.Window("Motion Flow", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        self._flow_provider = ui.ByteImageProvider()
+        with flow_window.frame:
+            with ui.ZStack(height=self._resolution[1]):
+                ui.Rectangle(style={"background_color": 0xFF000000})
+                ui.Label('Run the scenario for flow to be received',
+                         style={'font_size': 55,'alignment': ui.Alignment.CENTER},
+                         word_wrap=True)
+                flow_provider = ui.ImageWithProvider(self._flow_provider, width=self._resolution[0], 
+                                                      height=self._resolution[1], 
+                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
+                                                      'alignment' :ui.Alignment.CENTER})
+        self.wrapped_ui_elements.append(flow_window)
+        self.wrapped_ui_elements.append(self._flow_provider)
+        self.wrapped_ui_elements.append(flow_provider)
 
 
     def make_image_viewport(self, key: str):
