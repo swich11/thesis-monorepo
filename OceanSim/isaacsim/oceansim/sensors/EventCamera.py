@@ -14,6 +14,8 @@ import yaml
 import carb
 import h5py
 from pathlib import Path
+import quaternion
+from scipy.spatial.transform import Rotation
 
 
 from isaacsim.oceansim.utils.TuplePair import TuplePair
@@ -131,7 +133,7 @@ class EventCamera(Camera):
 
         # velocity inference because there is no physics sim
         self.last_trans_pos: np.ndarray = np.array([0.0, 0.0, 0.0])
-        self.last_quat_pos: np.ndarray = np.array([1.0, 0.0, 0.0, 0.0])
+        self.last_rot_pos: np.ndarray = np.array([0.0, 0.0, 0.0]) # zyx euler angles
         self.last_time = self._previous_time # gets the current time of the sim when the camera is launched
 
         if self._viewport:
@@ -171,10 +173,12 @@ class EventCamera(Camera):
 
         # calculate camera prim velocity (this is the stupidest thing ever, but the robot doesn't have physics)
         pose = self.get_world_pose()
+        
+        print(pose[1])
+        
 
-        lin_diff = pose[0] - self.last_trans_pos    # xyz world translation
-        quat_diff = pose[1] - self.last_quat_pos    # quarternion world orientation
-
+        # lin_diff = pose[0] - self.last_trans_pos    # xyz world translation
+        # quat_diff = pose[1] - self.last_rot_pos    # quarternion world orientation
 
         
         if hdr_curr.size != 0:
