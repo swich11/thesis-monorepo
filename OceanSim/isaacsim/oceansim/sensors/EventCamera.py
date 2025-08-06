@@ -170,24 +170,8 @@ class EventCamera(Camera):
         hdr_curr = self._annot_dict["HdrColor"].data
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
 
-        # calculate camera prim velocity (this is the stupidest thing ever, but the robot doesn't have physics)
-        pose = self.get_world_pose()
-        
-        q_new = quaternion.from_float_array(pose[1])
-        q_last = quaternion.from_float_array(self.last_quat_pos)
-
-        if self.last_time != self._previous_time and self.last_time:
-            ang_vel = angular_velocities(quaternion.as_float_array(q_last), 
-                                        quaternion.as_float_array(q_new), 
-                                        self._previous_time - self.last_time) # delta t
-
-        self.last_time = self._previous_time
-        self.last_quat_pos = pose[1]
-
-
-        # lin_diff = pose[0] - self.last_trans_pos    # xyz world translation
-        # quat_diff = pose[1] - self.last_rot_pos    # quarternion world orientation
-
+        velocities: np.ndarray = self.get_velocities()
+        print(velocities)
         
         if hdr_curr.size != 0:
             event_frame = self._renderer.render(hdr_curr, depths)
@@ -227,6 +211,35 @@ class EventCamera(Camera):
                 cv2.arrowedLine(output, (i + 6, j + 6), (i + 6 + average[0], j + 6 + average[1]), 
                                 color=(255, 255, 255, 255), thickness=1, tipLength=0.3)
         return output
+
+
+    def get_velocities(self) -> np.ndarray:
+        """
+            Gets the current velocities for the current render frame.
+
+            Returns: np.ndarray(1, 6);
+        """
+        pose = self.get_world_pose()
+        q_new = quaternion.from_float_array(pose[1])
+        trans_new = quaternion.as_vector_part(q_new.conj() * quaternion.from_vector_part(pose[0]) * q_new)
+        velocities = np.zeros((1, 6))
+
+        if self.last_time != self._previous_time and self.last_time:
+            dt = self._previous_time - self.last_time
+            q_last = self.last_quat_pos
+            ang_vel = angular_velocities(quaternion.as_float_array(q_last), 
+                                        quaternion.as_float_array(q_new), 
+                                        dt)
+            lin_vel = (trans_new - self.last_trans_pos) / dt
+            velocities = np.hstack([lin_vel, ang_vel])
+            
+        self.last_time = self._previous_time
+        self.last_quat_pos = q_new
+        self.last_trans_pos = trans_new
+
+        return velocities
+
+
 
 
     def make_viewport(self):
