@@ -17,6 +17,7 @@ from pathlib import Path
 import quaternion
 
 from isaacsim.oceansim.utils.TuplePair import TuplePair
+from isaacsim.oceansim.utils.quaternion import angular_velocities
 from isaacsim.oceansim.render.EventRenderer import EventRenderer
 
 
@@ -132,7 +133,7 @@ class EventCamera(Camera):
         # velocity inference because there is no physics sim
         self.last_trans_pos: np.ndarray = np.array([0.0, 0.0, 0.0])
         self.last_quat_pos: np.ndarray = np.array([1.0, 0.0, 0.0, 0.0])
-        self.last_time = self._previous_time # gets the current time of the sim when the camera is launched
+        self.last_time = None
 
         if self._viewport:
             self.make_viewport()
@@ -174,11 +175,13 @@ class EventCamera(Camera):
         
         q_new = quaternion.from_float_array(pose[1])
         q_last = quaternion.from_float_array(self.last_quat_pos)
-        q_diff = q_last.conj() * q_new
 
-        # print(q_diff)
-        print(quaternion.as_euler_angles(q_diff))
+        if self.last_time != self._previous_time and self.last_time:
+            ang_vel = angular_velocities(quaternion.as_float_array(q_last), 
+                                        quaternion.as_float_array(q_new), 
+                                        self._previous_time - self.last_time) # delta t
 
+        self.last_time = self._previous_time
         self.last_quat_pos = pose[1]
 
 
