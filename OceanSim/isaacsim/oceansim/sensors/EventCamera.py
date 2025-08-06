@@ -171,7 +171,8 @@ class EventCamera(Camera):
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
 
         velocities: np.ndarray = self.get_velocities()
-        print(velocities)
+        print(velocities[0])
+        self._velocity_plot.set_xy_data()
         
         if hdr_curr.size != 0:
             event_frame = self._renderer.render(hdr_curr, depths)
@@ -222,7 +223,7 @@ class EventCamera(Camera):
         pose = self.get_world_pose()
         q_new = quaternion.from_float_array(pose[1])
         trans_new = quaternion.as_vector_part(q_new.conj() * quaternion.from_vector_part(pose[0]) * q_new)
-        velocities = np.zeros((1, 6))
+        velocities = np.zeros(6)
 
         if self.last_time != self._previous_time and self.last_time:
             dt = self._previous_time - self.last_time
@@ -295,6 +296,20 @@ class EventCamera(Camera):
         self.wrapped_ui_elements.append(flow_window)
         self.wrapped_ui_elements.append(self._flow_provider)
         self.wrapped_ui_elements.append(flow_provider)
+
+        # velocity window (plotting window)
+        velocity_window = ui.Window("Velocities", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        with velocity_window.frame:
+            with ui.ScrollingFrame(
+                horizontal_scrollbar_policy=ui.ScrollBarPolicy.SCROLLBAR_AS_NEEDED,
+                vertical_scrollbar_policy=ui.ScrollBarPolicy.SCROLLBAR_AS_NEEDED,
+            ):
+                self._velocity_plot = ui.Plot()
+        self.wrapped_ui_elements.append(velocity_window)
+        self.wrapped_ui_elements.append(self._velocity_plot)
+
+                        
+            
 
 
     def make_image_viewport(self, key: str):
