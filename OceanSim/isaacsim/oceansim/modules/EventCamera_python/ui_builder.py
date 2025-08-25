@@ -245,6 +245,7 @@ class UIBuilder():
         self._cam_focal_length = 21
         self._event_cam = None
         self._event_cam_trans = self._cam_trans # event camera and rgb camera overlap
+        self._evcam_focal_length = 21
         self._DVL = None
         self._DVL_trans = np.array([0,0,-0.1])
         self._baro = None
@@ -336,9 +337,9 @@ class UIBuilder():
             self._cam.set_focal_length(0.1 * self._cam_focal_length)
             self._cam.set_clipping_range(0.1, 100)
         if self._use_event_camera:
-            self._event_cam = EventCamera(prim_path=robot_prim_path + '/DAVIS')
-            # TODO: fix focal length to emulate the DAVIS
-            self._event_cam.set_focal_length(0.1 * self._cam_focal_length)
+            self._event_cam = EventCamera(prim_path=robot_prim_path + '/DAVIS',
+                                            translation=self._event_cam_trans)
+            self._event_cam.set_focal_length(0.1 * self._evcam_focal_length)
             self._event_cam.set_clipping_range(0.1, 100)
         if self._use_DVL:
             from isaacsim.oceansim.sensors.DVLsensor import DVLsensor

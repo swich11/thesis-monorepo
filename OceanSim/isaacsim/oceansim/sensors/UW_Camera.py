@@ -11,7 +11,7 @@ import yaml
 import carb
 
 # Custom import
-from isaacsim.oceansim.utils.UWrenderer_utils import UW_render
+from isaacsim.oceansim.render.UWRenderer import UWRenderer
 
 
 class UW_Camera(Camera):
@@ -90,17 +90,17 @@ class UW_Camera(Camera):
                 try:
                     # Load the YAML content
                     yaml_content = yaml.safe_load(file)
-                    self._backscatter_value = wp.vec3f(*yaml_content['backscatter_value'])
-                    self._atten_coeff = wp.vec3f(*yaml_content['atten_coeff'])
-                    self._backscatter_coeff = wp.vec3f(*yaml_content['backscatter_coeff'])
+                    backscatter_value = wp.vec3f(*yaml_content['backscatter_value'])
+                    atten_coeff = wp.vec3f(*yaml_content['atten_coeff'])
+                    backscatter_coeff = wp.vec3f(*yaml_content['backscatter_coeff'])
                     print(f"[{self._name}] On {str(self._device)}. Using loaded render parameters:")
                     print(f"[{self._name}] Render parameters: {yaml_content}")
                 except yaml.YAMLError as exc:
                     carb.log_error(f"[{self._name}] Error reading YAML file: {exc}")
         else:
-            self._backscatter_value = wp.vec3f(*UW_param[0:3])
-            self._atten_coeff = wp.vec3f(*UW_param[6:9])
-            self._backscatter_coeff = wp.vec3f(*UW_param[3:6])
+            backscatter_value = wp.vec3f(*UW_param[0:3])
+            atten_coeff = wp.vec3f(*UW_param[6:9])
+            backscatter_coeff = wp.vec3f(*UW_param[3:6])
             print(f'[{self._name}] On {str(self._device)}. Using default render parameters.')
 
         
@@ -109,6 +109,8 @@ class UW_Camera(Camera):
 
         self._rgba_annot.attach(self._render_product_path)
         self._depth_annot.attach(self._render_product_path)
+
+        self._renderer = UWRenderer(self._res, backscatter_value, atten_coeff, backscatter_coeff)
 
         if self._viewport:
             self.make_viewport()
@@ -129,22 +131,7 @@ class UW_Camera(Camera):
         raw_rgba = self._rgba_annot.get_data()
         depth = self._depth_annot.get_data()
         if raw_rgba.size !=0:
-            uw_image = wp.zeros_like(raw_rgba)
-            wp.launch(
-                dim=np.flip(self.get_resolution()),
-                kernel=UW_render,
-                inputs=[
-                    raw_rgba,
-                    depth,
-                    self._backscatter_value,
-                    self._atten_coeff,
-                    self._backscatter_coeff
-                ],
-                outputs=[
-                    uw_image
-                ]
-            )  
-            
+            uw_image = self._renderer.render(raw_rgba, depth)     
             if self._viewport:
                 self._provider.set_bytes_data_from_gpu(uw_image.ptr, self.get_resolution())
             if self._writing:

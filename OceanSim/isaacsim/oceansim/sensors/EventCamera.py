@@ -1,6 +1,7 @@
 # Omniverse Import
 import omni.replicator.core as rep
 import omni.ui as ui
+from omni.gpu_foundation_factory._gpu_foundation_factory import TextureFormat
 
 # Isaac sim import
 from isaacsim.sensors.camera import Camera
@@ -8,17 +9,22 @@ from isaacsim.sensors.camera import Camera
 
 import numpy as np
 import warp as wp
+import cv2
 import yaml
 import carb
 import h5py
 from pathlib import Path
+import quaternion
+
+from isaacsim.oceansim.utils.TuplePair import TuplePair
+from isaacsim.oceansim.utils.quaternion import angular_velocities
+from isaacsim.oceansim.render.EventRenderer import EventRenderer
 
 
-from ..utils.TuplePair import TuplePair
-from isaacsim.oceansim.utils.UWrenderer_utils import EVrender
 
-# TODO: grab ground truth velocities
+# TODO: grab ground truth velocities (there is no physics prim on the robot -> grab local pose and use this between frames for now)
 # TODO: make output dataset path choosable
+# TODO: create all viewports and make them viewable (do not change outputs quite yet)
 
 
 class EventCamera(Camera):
@@ -29,8 +35,8 @@ class EventCamera(Camera):
                  dt = None,
                  resolution = (346, 260),
                  position = None,
-                 translation = None,
                  orientation = None,
+                 translation = None,
                  render_product_path = None,):
         """Initialize an event camera sensor.
     
@@ -61,11 +67,7 @@ class EventCamera(Camera):
         self._prim_path = prim_path
         self._res = resolution
         self._writing = False
-        super().__init__(prim_path, name, frequency, dt, resolution, position, translation, orientation, render_product_path)
-
-
-    def __del__(self):
-        self.close()
+        super().__init__(prim_path, name, frequency, dt, resolution, position, orientation, translation, render_product_path)
 
 
     def initialize(self,
@@ -89,7 +91,7 @@ class EventCamera(Camera):
             physics_sim_view (_type_, optional): _description_. Defaults to None.            
 
         """
-        self._id = 0
+        self._id: int = 0
         self._viewport = viewport
         self._device = wp.get_preferred_device()
         super().initialize(physics_sim_view)
@@ -99,19 +101,22 @@ class EventCamera(Camera):
                 try:
                     # Load the YAML content
                     yaml_content = yaml.safe_load(file)
-                    self._backscatter_value = wp.vec3f(*yaml_content['backscatter_value'])
-                    self._atten_coeff = wp.vec3f(*yaml_content['atten_coeff'])
-                    self._backscatter_coeff = wp.vec3f(*yaml_content['backscatter_coeff'])
+                    backscatter_value = wp.vec3f(*yaml_content['backscatter_value'])
+                    attenuation_coeff = wp.vec3f(*yaml_content['atten_coeff'])
+                    backscatter_coeff = wp.vec3f(*yaml_content['backscatter_coeff'])
                     print(f"[{self._name}] On {str(self._device)}. Using loaded render parameters:")
                     print(f"[{self._name}] Render parameters: {yaml_content}")
                 except yaml.YAMLError as exc:
                     carb.log_error(f"[{self._name}] Error reading YAML file: {exc}")
         else:
-            self._backscatter_value = wp.vec3f(*UW_param[0:3])
-            self._atten_coeff = wp.vec3f(*UW_param[6:9])
-            self._backscatter_coeff = wp.vec3f(*UW_param[3:6])
+            backscatter_value = wp.vec3f(*UW_param[0:3])
+            attenuation_coeff = wp.vec3f(*UW_param[6:9])
+            backscatter_coeff = wp.vec3f(*UW_param[3:6])
             print(f'[{self._name}] On {str(self._device)}. Using default render parameters.')
 
+        self._renderer = EventRenderer(backscatter_value=backscatter_value,
+                                       atten_coeff=attenuation_coeff,
+                                       backscatter_coeff=backscatter_coeff)
 
         # Add event annotators here
         self._annot_dict = {
@@ -124,6 +129,11 @@ class EventCamera(Camera):
         # attach annotators
         for key in self._annot_dict.keys():
             self._annot_dict[key][0].attach(self._render_product_path)
+
+        # velocity inference because there is no physics sim
+        self.last_trans_pos: np.ndarray = np.array([0.0, 0.0, 0.0])
+        self.last_quat_pos: np.ndarray = np.array([1.0, 0.0, 0.0, 0.0])
+        self.last_time = None
 
         if self._viewport:
             self.make_viewport()
@@ -138,8 +148,6 @@ class EventCamera(Camera):
             }
             self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
 
-        # attach renderer
-        self._renderer = EventRenderer()
         print(f'[{self._name}] Initialized successfully. Data writing: {self._writing}')
 
 
@@ -156,33 +164,94 @@ class EventCamera(Camera):
             - Updates viewport display if enabled
             - Saves all to disk if writing_dir was specified
         """
-        # TODO: import oceansim warp on hdr make warp kernel to turn data into events by interpolation, actually show event image
         for key in self._annot_dict.keys():
             self._annot_dict[key].data = self._annot_dict[key][0].get_data()
         ldr = self._rgb_annotator.get_data() # from the Camera class
         hdr_curr = self._annot_dict["HdrColor"].data
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
+
+        velocities: np.ndarray = self.get_velocities()
+        print(velocities[0])
+        self._velocity_plot.set_xy_data()
         
         if hdr_curr.size != 0:
             event_frame = self._renderer.render(hdr_curr, depths)
             if self._viewport:
-                self._provider.set_bytes_data_from_gpu(event_frame.ptr, self.get_resolution())
+                # convert depth map values to grayscale image in rgba format
+                # probably run these async
+                depth_image = np.clip(np.nan_to_num(self._annot_dict["Depths"].data.numpy(), nan=0.0), 0.0, 20.0)
+                depth_image = np.stack([np.uint8(depth_image / 20.0 * 255)]*3 + [np.ones_like(depth_image)*255], axis=2)
+
+                motion_flow = self._annot_dict["MotionFlow"].data.numpy()
+                motion_flow_image = self.draw_motion_flow(motion_flow[:, :, 0:2]) # only need the x and y flow
+                #
+
+                res = self.get_resolution()
+                self._provider.set_bytes_data_from_gpu(event_frame.ptr, res)
+                self._depth_provider.set_data_array(depth_image, res)
+                self._flow_provider.set_data_array(motion_flow_image, res)
+
 
             if self._writing:
-                self._writing_backend.schedule(self.write_h5py, data=event_frame.numpy(), key="Events")
+                # write all the data required from the renderer -> need to include base velocities here
+                # need to add sim times here aswell
+                self._writing_backend.schedule(self.write_h5py, data=event_frame, key="Events")
+                self._writing_backend.schedule(self.write_h5py, data=self._annot_dict["Depths"].data, key="Depths")
+                self._writing_backend.schedule(self.write_h5py, data=self._annot_dict["MotionFlow"].data, key="MotionFlow")
                 print(f'[{self._name}] [{self._id}] events saved to {self._writing_backend.output_dir}')
                 
             self._id += 1
 
 
+    def draw_motion_flow(self, flow: np.ndarray) -> np.ndarray:
+        output = np.zeros((self._res[1], self._res[0], 4), dtype=np.uint8)
+        output[:, :, 3] = 255
+        for i in range(0, self._res[0] - 12, 12):
+            for j in range(0, self._res[1] - 12, 12):
+                average = np.int8(np.average(flow[j:(j+12), i:(i+12)], axis=(1, 0)))
+                cv2.arrowedLine(output, (i + 6, j + 6), (i + 6 + average[0], j + 6 + average[1]), 
+                                color=(255, 255, 255, 255), thickness=1, tipLength=0.3)
+        return output
+
+
+    def get_velocities(self) -> np.ndarray:
+        """
+            Gets the current velocities for the current render frame.
+
+            Returns: np.ndarray(1, 6);
+        """
+        pose = self.get_world_pose()
+        q_new = quaternion.from_float_array(pose[1])
+        trans_new = quaternion.as_vector_part(q_new.conj() * quaternion.from_vector_part(pose[0]) * q_new)
+        velocities = np.zeros(6)
+
+        if self.last_time != self._previous_time and self.last_time:
+            dt = self._previous_time - self.last_time
+            q_last = self.last_quat_pos
+            ang_vel = angular_velocities(quaternion.as_float_array(q_last), 
+                                        quaternion.as_float_array(q_new), 
+                                        dt)
+            lin_vel = (trans_new - self.last_trans_pos) / dt
+            velocities = np.hstack([lin_vel, ang_vel])
+            
+        self.last_time = self._previous_time
+        self.last_quat_pos = q_new
+        self.last_trans_pos = trans_new
+
+        return velocities
+
+
+
+
     def make_viewport(self):
         """
-            Create a viewport for real-time visualization of accumulated events as frames.
+            Create a viewport for real-time visualization of events as frames.
         """
         self.wrapped_ui_elements = []
-        self.window = ui.Window(self._name, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        # event window
+        evcam_window = ui.Window(self._name, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
         self._provider = ui.ByteImageProvider()
-        with self.window.frame:
+        with evcam_window.frame:
             with ui.ZStack(height=self._resolution[1]):
                 ui.Rectangle(style={"background_color": 0xFF000000})
                 ui.Label('Run the scenario for events to be received',
@@ -194,7 +263,90 @@ class EventCamera(Camera):
                                                       'alignment' :ui.Alignment.CENTER})
         self.wrapped_ui_elements.append(image_provider)
         self.wrapped_ui_elements.append(self._provider)
-        self.wrapped_ui_elements.append(self.window)
+        self.wrapped_ui_elements.append(evcam_window)
+        # depth window
+        depths_window = ui.Window("Depths", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        self._depth_provider = ui.ByteImageProvider()
+        with depths_window.frame:
+            with ui.ZStack(height=self._resolution[1]):
+                ui.Rectangle(style={"background_color": 0xFF000000})
+                ui.Label('Run the scenario for depths to be received',
+                         style={'font_size': 55,'alignment': ui.Alignment.CENTER},
+                         word_wrap=True)
+                depth_provider = ui.ImageWithProvider(self._depth_provider, width=self._resolution[0], 
+                                                      height=self._resolution[1], 
+                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
+                                                      'alignment' :ui.Alignment.CENTER})
+        self.wrapped_ui_elements.append(depths_window)
+        self.wrapped_ui_elements.append(self._depth_provider)
+        self.wrapped_ui_elements.append(depth_provider)
+        # motion flow window
+        flow_window = ui.Window("Motion Flow", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        self._flow_provider = ui.ByteImageProvider()
+        with flow_window.frame:
+            with ui.ZStack(height=self._resolution[1]):
+                ui.Rectangle(style={"background_color": 0xFF000000})
+                ui.Label('Run the scenario for flow to be received',
+                         style={'font_size': 55,'alignment': ui.Alignment.CENTER},
+                         word_wrap=True)
+                flow_provider = ui.ImageWithProvider(self._flow_provider, width=self._resolution[0], 
+                                                      height=self._resolution[1], 
+                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
+                                                      'alignment' :ui.Alignment.CENTER})
+        self.wrapped_ui_elements.append(flow_window)
+        self.wrapped_ui_elements.append(self._flow_provider)
+        self.wrapped_ui_elements.append(flow_provider)
+
+        # velocity window (plotting window)
+        velocity_window = ui.Window("Velocities", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        with velocity_window.frame:
+            with ui.ScrollingFrame(
+                horizontal_scrollbar_policy=ui.ScrollBarPolicy.SCROLLBAR_AS_NEEDED,
+                vertical_scrollbar_policy=ui.ScrollBarPolicy.SCROLLBAR_AS_NEEDED,
+            ):
+                self._velocity_plot = ui.Plot()
+        self.wrapped_ui_elements.append(velocity_window)
+        self.wrapped_ui_elements.append(self._velocity_plot)
+
+                        
+            
+
+
+    def make_image_viewport(self, key: str):
+        window = ui.Window(key, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
+        self._providers[key] = ui.ByteImageProvider()
+        with window.frame:
+            with ui.ZStack(height=self._resolution[1]):
+                ui.Rectangle(style={"background_color": 0xFF000000})
+                ui.Label('Run the scenario for data to be received',
+                         style={'font_size': 55, 'alignment': ui.Alignment.CENTER},
+                         word_wrap=True)
+                image_provider = ui.ImageWithProvider(self._providers[key], 
+                                                      width=self._resolution[0],
+                                                      height=self._resolution[1],
+                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
+                                                      'alignment' :ui.Alignment.CENTER})
+        self.wrapped_ui_elements.append(self._providers[key])
+        self.wrapped_ui_elements.append(image_provider)
+        self.wrapped_ui_elements.append(window)
+
+
+    def make_graph_viewport(self, key: str):
+        # TODO: make this a thing for 6-DOF IMU and 6-DOF velocities
+        pass
+
+
+    def make_viewports(self) -> None:
+        # these are automatically used by viewport makers
+        self._wrapped_ui_elements = []
+        self._providers = {}
+
+        self.make_image_viewport("Events")
+        self.make_image_viewport("Depths")
+        self.make_image_viewport("MotionFlow")
+
+        self.make_graph_viewport("IMU")
+        self.make_graph_viewport("Velocities")
 
 
     def close(self):
@@ -226,7 +378,6 @@ class EventCamera(Camera):
             elem.destroy()
 
 
-
     def open_h5py(self, path: str):
         """Create the h5py dataset on path. Destroys dataset if it already exists.
         
@@ -245,13 +396,12 @@ class EventCamera(Camera):
             ) # this will autochunk and autocompress
                                         
 
-
-
-    def write_h5py(self, data: np.ndarray, key: str):
+    def write_h5py(self, data: wp.array, key: str):
         """Write numpy array to h5py file format. The key defines the dataset group to store into.
 
         Returns -> None
         """
+        data: np.ndarray = data.numpy()  # convert to numpy array
         dset: h5py.Dataset = self._write_dict[key].data
         dset.resize(tuple([dset.shape[0] + 1]) + dset.shape[1:len(dset.shape)]) # add 1 to dataset shape
         dset[-1] = data
@@ -264,39 +414,4 @@ class EventCamera(Camera):
         Returns -> None
         """
         file.close()
-
-
-
-class EventRenderer():
-    def __init__(self, 
-                 resolution = (346, 260),
-                 threshold_on: float = 0.143,
-                 threshold_off: float = 0.225,
-                 std: float = 0.05,
-                 backscatter_value: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0),
-                 atten_coeff: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0),
-                 backscatter_coeff: wp.vec3f = wp.vec3f(0.0, 0.0, 0.0)):
-        log_val = np.log2(10)
-        self._threshold_on: wp.float32 = wp.float32(threshold_on*log_val) # shift thresholds to log2 space for computational efficiency
-        self._threshold_off: wp.float32 = wp.float32(threshold_off*log_val)
-        self.pixel_store: wp.array = wp.zeros(np.flip(resolution), wp.float32)
-        self._noise_std: wp.float32 = wp.float32(std*log_val)
-        self._resolution = np.flip(resolution) # flip to nvidia annotator shape
-        self._backscatter_value: wp.vec3f = backscatter_value
-        self._atten_coeff: wp.vec3f = atten_coeff
-        self._backscatter_coeff: wp.vec3f = backscatter_coeff
-        
-
-    def render(self, hdrCurr: wp.array, depths: wp.array) -> wp.array:
-        frame_image = wp.zeros((260, 346, 4), dtype=wp.uint8)
-        wp.launch(
-            dim=self._resolution,
-            kernel=EVrender,
-            inputs=[hdrCurr, self.pixel_store, depths, self._backscatter_value,
-                      self._atten_coeff, self._backscatter_coeff, self._threshold_on,
-                      self._threshold_off, self._noise_std, 1],  # time is for random standard deviation
-            outputs=[frame_image],
-
-        )
-        return frame_image
 
