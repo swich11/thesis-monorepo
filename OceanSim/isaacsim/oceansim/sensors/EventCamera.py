@@ -19,9 +19,8 @@ from pathlib import Path
 import quaternion
 
 
-# TODO: grab ground truth velocities (there is no physics prim on the robot -> grab local pose and use this between frames for now)
-# TODO: make output dataset path choosable
 # TODO: create all viewports and make them viewable (do not change outputs quite yet)
+# TODO: make output dataset path choosable
 
 
 class EventCamera(Camera):
@@ -174,7 +173,6 @@ class EventCamera(Camera):
         
         if hdr_curr.size != 0:
             on_events, off_events = self._renderer.calculate_events(hdr_curr, depths)
-            # TODO: save the on and off pixels using h5py
             event_frame = self._renderer.render(on_events, off_events)
             if self._viewport:
                 # convert depth map values to grayscale image in rgba format
