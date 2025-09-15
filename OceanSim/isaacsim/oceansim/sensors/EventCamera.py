@@ -1,10 +1,12 @@
-# Omniverse Import
 import omni.replicator.core as rep
 import omni.ui as ui
 from omni.gpu_foundation_factory._gpu_foundation_factory import TextureFormat
 
-# Isaac sim import
+
 from isaacsim.sensors.camera import Camera
+from isaacsim.oceansim.utils.TuplePair import TuplePair
+from isaacsim.oceansim.utils.quaternion import angular_velocities
+from isaacsim.oceansim.render.EventRenderer import EventRenderer
 
 
 import numpy as np
@@ -15,11 +17,6 @@ import carb
 import h5py
 from pathlib import Path
 import quaternion
-
-from isaacsim.oceansim.utils.TuplePair import TuplePair
-from isaacsim.oceansim.utils.quaternion import angular_velocities
-from isaacsim.oceansim.render.EventRenderer import EventRenderer
-
 
 
 # TODO: grab ground truth velocities (there is no physics prim on the robot -> grab local pose and use this between frames for now)
@@ -175,7 +172,8 @@ class EventCamera(Camera):
         self._velocity_plot.set_xy_data()
         
         if hdr_curr.size != 0:
-            event_frame = self._renderer.render(hdr_curr, depths)
+            on_pixels, off_pixels = self._renderer.calculate_events(hdr_curr, depths)
+            event_frame = self._renderer.render(on_pixels, off_pixels)
             if self._viewport:
                 # convert depth map values to grayscale image in rgba format
                 # probably run these async
