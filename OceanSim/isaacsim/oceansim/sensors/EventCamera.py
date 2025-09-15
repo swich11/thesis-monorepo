@@ -139,18 +139,19 @@ class EventCamera(Camera):
             self._writing = True
             self._writing_backend = rep.BackendDispatch()
             self._write_dict = {
-                "Events": TuplePair((np.uint8, (1, self._resolution[0], self._resolution[1]))),
+                "OnEvents": TuplePair((np.bool_, (1, self._resolution[0], self._resolution[1]))),
+                "OffEvents": TuplePair((np.bool_, (1, self._resolution[0], self._resolution[1]))),
                 "Depths": TuplePair((np.float32, (1, self._resolution[0], self._resolution[1]))),
                 "MotionFlow": TuplePair((np.float32, (4, self._resolution[0], self._resolution[1]))),
+                "Velocities": TuplePair((np.float32, (6, 1))),
             }
             self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
 
         print(f'[{self._name}] Initialized successfully. Data writing: {self._writing}')
 
 
-
     def render(self):
-        """Process continuous events for the time period of a single frame. Display the accumulated events in an image frame.
+        """Process continuous events fo                "Events": TuplePair((np.uint8, (1, self._resolution[0], self._resolution[1]))),r the time period of a single frame. Display the accumulated events in an image frame.
         Also processes and saves:
              - low dynamic range images
              - depth maps to image plane
@@ -172,8 +173,9 @@ class EventCamera(Camera):
         self._velocity_plot.set_xy_data()
         
         if hdr_curr.size != 0:
-            on_pixels, off_pixels = self._renderer.calculate_events(hdr_curr, depths)
-            event_frame = self._renderer.render(on_pixels, off_pixels)
+            on_events, off_events = self._renderer.calculate_events(hdr_curr, depths)
+            # TODO: save the on and off pixels using h5py
+            event_frame = self._renderer.render(on_events, off_events)
             if self._viewport:
                 # convert depth map values to grayscale image in rgba format
                 # probably run these async
@@ -193,9 +195,11 @@ class EventCamera(Camera):
             if self._writing:
                 # write all the data required from the renderer -> need to include base velocities here
                 # need to add sim times here aswell
-                self._writing_backend.schedule(self.write_h5py, data=event_frame, key="Events")
-                self._writing_backend.schedule(self.write_h5py, data=self._annot_dict["Depths"].data, key="Depths")
-                self._writing_backend.schedule(self.write_h5py, data=self._annot_dict["MotionFlow"].data, key="MotionFlow")
+                self._writing_backend.schedule(self.write_h5py_numpy, data=velocities, key="Velocities")
+                self._writing_backend.schedule(self.write_h5py_warp, data=on_events, key="OnEvents")
+                self._writing_backend.schedule(self.write_h5py_warp, data=off_events, key="OffEvents")
+                self._writing_backend.schedule(self.write_h5py_warp, data=self._annot_dict["Depths"].data, key="Depths")
+                self._writing_backend.schedule(self.write_h5py_warp, data=self._annot_dict["MotionFlow"].data, key="MotionFlow")
                 print(f'[{self._name}] [{self._id}] events saved to {self._writing_backend.output_dir}')
                 
             self._id += 1
@@ -237,8 +241,6 @@ class EventCamera(Camera):
         self.last_trans_pos = trans_new
 
         return velocities
-
-
 
 
     def make_viewport(self):
@@ -307,9 +309,6 @@ class EventCamera(Camera):
         self.wrapped_ui_elements.append(self._velocity_plot)
 
                         
-            
-
-
     def make_image_viewport(self, key: str):
         window = ui.Window(key, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
         self._providers[key] = ui.ByteImageProvider()
@@ -394,19 +393,26 @@ class EventCamera(Camera):
             ) # this will autochunk and autocompress
                                         
 
-    def write_h5py(self, data: wp.array, key: str):
-        """Write numpy array to h5py file format. The key defines the dataset group to store into.
+    def write_h5py_warp(self, data: wp.array, key: str) -> None:
+        """
+            Write warp array to h5py file format. The key defines the dataset group to store into.
 
-        Returns -> None
+            Returns -> None
         """
         data: np.ndarray = data.numpy()  # convert to numpy array
+        self.write_h5py_numpy(data.numpy(), key)
+
+
+    def write_h5py_numpy(self, data: np.array, key: str) -> None:
+        """
+            Write numpy array to h5py file format. The key defines the dataset group to store into. 
+        """
         dset: h5py.Dataset = self._write_dict[key].data
         dset.resize(tuple([dset.shape[0] + 1]) + dset.shape[1:len(dset.shape)]) # add 1 to dataset shape
         dset[-1] = data
 
 
-
-    def close_h5py(self, file: h5py.File):
+    def close_h5py(self, file: h5py.File) -> None:
         """Close the h5py dataset for the run
 
         Returns -> None
