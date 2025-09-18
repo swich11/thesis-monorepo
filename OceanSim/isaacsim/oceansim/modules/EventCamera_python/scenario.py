@@ -31,6 +31,7 @@ class Sensor_Scenario():
         self._cam = None
         self._DVL = None
         self._baro = None
+        self._IMU = None
 
         self._ctrl_mode = None
 
@@ -50,9 +51,11 @@ class Sensor_Scenario():
         self._baro = baro
         self._ctrl_mode = ctrl_mode
 
+
         if self._sonar:
             self._sonar.sonar_initialize(include_unlabelled = True)
         if self._ev_cam:
+            # initialise event camera and the IMU for the camera
             self._ev_cam.initialize()
         if self._cam:
             self._cam.initialize()
