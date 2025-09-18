@@ -19,6 +19,9 @@ from pathlib import Path
 import quaternion
 
 
+from typing import Dict # type: ignore
+
+
 # TODO: create all viewports and make them viewable (do not change outputs quite yet)
 # TODO: make output dataset path choosable
 
@@ -132,7 +135,7 @@ class EventCamera(Camera):
         self.last_time = None
 
         if self._viewport:
-            self.make_viewport()
+            self.make_viewports()
 
         if writing_dir is not None:
             self._writing = True
@@ -143,6 +146,8 @@ class EventCamera(Camera):
                 "Depths": TuplePair((np.float32, (1, self._resolution[0], self._resolution[1]))),
                 "MotionFlow": TuplePair((np.float32, (4, self._resolution[0], self._resolution[1]))),
                 "Velocities": TuplePair((np.float32, (6, 1))),
+                # "FrameTimes"
+                # "AccelerometerReadings"
             }
             self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
 
@@ -168,8 +173,6 @@ class EventCamera(Camera):
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
 
         velocities: np.ndarray = self.get_velocities()
-        print(velocities[0])
-        self._velocity_plot.set_xy_data()
         
         if hdr_curr.size != 0:
             on_events, off_events = self._renderer.calculate_events(hdr_curr, depths)
@@ -182,12 +185,11 @@ class EventCamera(Camera):
 
                 motion_flow = self._annot_dict["MotionFlow"].data.numpy()
                 motion_flow_image = self.draw_motion_flow(motion_flow[:, :, 0:2]) # only need the x and y flow
-                #
 
                 res = self.get_resolution()
-                self._provider.set_bytes_data_from_gpu(event_frame.ptr, res)
-                self._depth_provider.set_data_array(depth_image, res)
-                self._flow_provider.set_data_array(motion_flow_image, res)
+                self._image_providers["Events"].set_bytes_data_from_gpu(event_frame.ptr, res)
+                self._image_providers["Depths"].set_data_array(depth_image, res)
+                self._image_providers["MotionFlow"].set_data_array(motion_flow_image, res)
 
 
             if self._writing:
@@ -240,108 +242,44 @@ class EventCamera(Camera):
 
         return velocities
 
-
-    def make_viewport(self):
-        """
-            Create a viewport for real-time visualization of events as frames.
-        """
-        self.wrapped_ui_elements = []
-        # event window
-        evcam_window = ui.Window(self._name, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
-        self._provider = ui.ByteImageProvider()
-        with evcam_window.frame:
-            with ui.ZStack(height=self._resolution[1]):
-                ui.Rectangle(style={"background_color": 0xFF000000})
-                ui.Label('Run the scenario for events to be received',
-                         style={'font_size': 55,'alignment': ui.Alignment.CENTER},
-                         word_wrap=True)
-                image_provider = ui.ImageWithProvider(self._provider, width=self._resolution[0], 
-                                                      height=self._resolution[1], 
-                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
-                                                      'alignment' :ui.Alignment.CENTER})
-        self.wrapped_ui_elements.append(image_provider)
-        self.wrapped_ui_elements.append(self._provider)
-        self.wrapped_ui_elements.append(evcam_window)
-        # depth window
-        depths_window = ui.Window("Depths", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
-        self._depth_provider = ui.ByteImageProvider()
-        with depths_window.frame:
-            with ui.ZStack(height=self._resolution[1]):
-                ui.Rectangle(style={"background_color": 0xFF000000})
-                ui.Label('Run the scenario for depths to be received',
-                         style={'font_size': 55,'alignment': ui.Alignment.CENTER},
-                         word_wrap=True)
-                depth_provider = ui.ImageWithProvider(self._depth_provider, width=self._resolution[0], 
-                                                      height=self._resolution[1], 
-                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
-                                                      'alignment' :ui.Alignment.CENTER})
-        self.wrapped_ui_elements.append(depths_window)
-        self.wrapped_ui_elements.append(self._depth_provider)
-        self.wrapped_ui_elements.append(depth_provider)
-        # motion flow window
-        flow_window = ui.Window("Motion Flow", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
-        self._flow_provider = ui.ByteImageProvider()
-        with flow_window.frame:
-            with ui.ZStack(height=self._resolution[1]):
-                ui.Rectangle(style={"background_color": 0xFF000000})
-                ui.Label('Run the scenario for flow to be received',
-                         style={'font_size': 55,'alignment': ui.Alignment.CENTER},
-                         word_wrap=True)
-                flow_provider = ui.ImageWithProvider(self._flow_provider, width=self._resolution[0], 
-                                                      height=self._resolution[1], 
-                                                      style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
-                                                      'alignment' :ui.Alignment.CENTER})
-        self.wrapped_ui_elements.append(flow_window)
-        self.wrapped_ui_elements.append(self._flow_provider)
-        self.wrapped_ui_elements.append(flow_provider)
-
-        # velocity window (plotting window)
-        velocity_window = ui.Window("Velocities", width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
-        with velocity_window.frame:
-            with ui.ScrollingFrame(
-                horizontal_scrollbar_policy=ui.ScrollBarPolicy.SCROLLBAR_AS_NEEDED,
-                vertical_scrollbar_policy=ui.ScrollBarPolicy.SCROLLBAR_AS_NEEDED,
-            ):
-                self._velocity_plot = ui.Plot()
-        self.wrapped_ui_elements.append(velocity_window)
-        self.wrapped_ui_elements.append(self._velocity_plot)
-
-                        
+        
     def make_image_viewport(self, key: str):
         window = ui.Window(key, width=self._resolution[0], height=self._resolution[1] + 40, visible=True)
-        self._providers[key] = ui.ByteImageProvider()
+        self._image_providers[key] = ui.ByteImageProvider()
         with window.frame:
             with ui.ZStack(height=self._resolution[1]):
                 ui.Rectangle(style={"background_color": 0xFF000000})
                 ui.Label('Run the scenario for data to be received',
                          style={'font_size': 55, 'alignment': ui.Alignment.CENTER},
                          word_wrap=True)
-                image_provider = ui.ImageWithProvider(self._providers[key], 
+                image_provider = ui.ImageWithProvider(self._image_providers[key], 
                                                       width=self._resolution[0],
                                                       height=self._resolution[1],
                                                       style={'fill_policy': ui.FillPolicy.PRESERVE_ASPECT_FIT,
                                                       'alignment' :ui.Alignment.CENTER})
-        self.wrapped_ui_elements.append(self._providers[key])
-        self.wrapped_ui_elements.append(image_provider)
-        self.wrapped_ui_elements.append(window)
+        self._wrapped_ui_elements.append(self._image_providers[key])
+        self._wrapped_ui_elements.append(image_provider)
+        self._wrapped_ui_elements.append(window)
 
 
     def make_graph_viewport(self, key: str):
-        # TODO: make this a thing for 6-DOF IMU and 6-DOF velocities
+        # TODO: make this a thing for 6-DOF velocities
         pass
 
 
     def make_viewports(self) -> None:
-        # these are automatically used by viewport makers
         self._wrapped_ui_elements = []
-        self._providers = {}
+        self._image_providers: Dict[str, ui.ByteImageProvider] = {}
 
         self.make_image_viewport("Events")
         self.make_image_viewport("Depths")
         self.make_image_viewport("MotionFlow")
 
-        self.make_graph_viewport("IMU")
-        self.make_graph_viewport("Velocities")
+        # TODO: Move Graph Viewports to a velocity logging class
+        # self.make_graph_viewport("IMU_Linear")
+        # self.make_graph_viewport("IMU_Angular")
+        # self.make_graph_viewport("GroundTruthLinear")
+        # self.make_graph_viewport("GroundTruthAngular")
 
 
     def close(self):
@@ -369,7 +307,7 @@ class EventCamera(Camera):
             - Called automatically by close()
             - Only needed if manually managing UI lifecycle
         """
-        for elem in self.wrapped_ui_elements:
+        for elem in self._wrapped_ui_elements:
             elem.destroy()
 
 
