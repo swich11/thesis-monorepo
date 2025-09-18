@@ -5,6 +5,7 @@ from omni.gpu_foundation_factory._gpu_foundation_factory import TextureFormat
 
 from isaacsim.sensors.camera import Camera
 from isaacsim.sensors.physics import IMUSensor
+from isaacsim.core.prims import SingleRigidPrim
 
 
 from isaacsim.oceansim.utils.TuplePair import TuplePair
@@ -96,19 +97,6 @@ class EventCamera(Camera):
         self._viewport = viewport
         self._device = wp.get_preferred_device()
         super().initialize(physics_sim_view)
-
-        # add child sensors
-        self._IMU = IMUSensor(
-            prim_path=self.prim_path + "/IMU",
-            name="event_cam_IMU",
-            frequency=60,
-            translation=np.array([0, 0, 0]),
-            orientation=np.array([1, 0, 0, 0]),
-            linear_acceleration_filter_size = 10,
-            angular_velocity_filter_size = 10,
-            orientation_filter_size = 10,
-        )
-        self._IMU.initialize(physics_sim_view)
 
 
         if UW_yaml_path is not None:
