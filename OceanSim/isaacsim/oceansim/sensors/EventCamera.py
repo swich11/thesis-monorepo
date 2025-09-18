@@ -108,7 +108,7 @@ class EventCamera(Camera):
             angular_velocity_filter_size = 10,
             orientation_filter_size = 10,
         )
-        self._IMU.initialize()
+        self._IMU.initialize(physics_sim_view)
 
 
         if UW_yaml_path is not None:
@@ -171,7 +171,7 @@ class EventCamera(Camera):
 
 
     def render(self):
-        """Process continuous events fo                "Events": TuplePair((np.uint8, (1, self._resolution[0], self._resolution[1]))),r the time period of a single frame. Display the accumulated events in an image frame.
+        """Process continuous events for the time period of a single frame. Display the accumulated events in an image frame.
         Also processes and saves:
              - low dynamic range images
              - depth maps to image plane
@@ -187,8 +187,11 @@ class EventCamera(Camera):
         ldr = self._rgb_annotator.get_data() # from the Camera class
         hdr_curr = self._annot_dict["HdrColor"].data
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
+        frame_time = self._current_frame["rendering_time"] # simulator time for the frame
 
         velocities: np.ndarray = self.get_velocities()
+        imu_readings = self._IMU.get_current_frame()
+        print(imu_readings)
         
         if hdr_curr.size != 0:
             on_events, off_events = self._renderer.calculate_events(hdr_curr, depths)
