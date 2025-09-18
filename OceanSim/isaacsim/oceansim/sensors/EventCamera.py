@@ -275,6 +275,7 @@ class EventCamera(Camera):
         self.make_image_viewport("Depths")
         self.make_image_viewport("MotionFlow")
 
+
         # TODO: Move Graph Viewports to a velocity logging class
         # self.make_graph_viewport("IMU_Linear")
         # self.make_graph_viewport("IMU_Angular")
