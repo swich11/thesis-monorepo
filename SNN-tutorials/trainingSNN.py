@@ -15,8 +15,7 @@ batch_size = 128
 data_path = '/tmp/data/mnist'
 
 dtype = torch.float
-# CHANGE THIS SHIT
-device = torch.device("cpu") # painnnnn
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 transform = transforms.Compose([
                 transforms.Resize((28, 28)),
@@ -33,7 +32,7 @@ test_loader = DataLoader(mnist_test, batch_size=batch_size, shuffle=True, drop_l
 
 # network definition
 num_inputs = 28*28
-num_hidden = 100 # should be more but my compute is weak
+num_hidden = 1000
 num_outputs = 10
 
 # spiking dynamics
