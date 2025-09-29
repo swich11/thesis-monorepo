@@ -1,6 +1,7 @@
 # Omniverse import
 import numpy as np
 from pxr import Gf, PhysxSchema
+from pxr import Usd
 
 # Isaac sim import
 from isaacsim.core.prims import SingleRigidPrim
@@ -12,7 +13,7 @@ from ....oceansim.sensors.BarometerSensor import BarometerSensor
 from ....oceansim.sensors.ImagingSonarSensor import ImagingSonarSensor
 from ....oceansim.sensors.DVLsensor import DVLsensor
 from ....oceansim.sensors.UW_Camera import UW_Camera
-from ....oceansim.sensors.EventCamera import EventCamera
+from ....oceansim.sensors.UnifiedEventCamera import UnifiedEventCamera
 
 # OceanSim imports
 from ...utils.keyboard_cmd import keyboard_cmd
@@ -25,13 +26,12 @@ from typing import List # type: ignore
 
 class Sensor_Scenario():
     def __init__(self):
-        self._rob = None
+        self._rob: Usd.Prim = None
         self._sonar = None
         self._ev_cam = None
         self._cam = None
         self._DVL = None
         self._baro = None
-        self._IMU = None
 
         self._ctrl_mode = None
 
@@ -41,9 +41,10 @@ class Sensor_Scenario():
         self._controls = []
 
 
-    def setup_scenario(self, rob, sonar: ImagingSonarSensor | None, ev_cam: EventCamera | None, cam: UW_Camera | None, 
+    def setup_scenario(self, rob: Usd.Prim, rob_forceAPI, sonar: ImagingSonarSensor | None, ev_cam: UnifiedEventCamera | None, cam: UW_Camera | None, 
                        DVL: DVLsensor | None, baro: BarometerSensor | None, ctrl_mode: str):
         self._rob = rob
+        self._rob_forceAPI = rob_forceAPI
         self._sonar = sonar
         self._ev_cam = ev_cam
         self._cam = cam
@@ -55,7 +56,6 @@ class Sensor_Scenario():
         if self._sonar:
             self._sonar.sonar_initialize(include_unlabelled = True)
         if self._ev_cam:
-            # initialise event camera and the IMU for the camera
             self._ev_cam.initialize()
         if self._cam:
             self._cam.initialize()
@@ -85,7 +85,6 @@ class Sensor_Scenario():
         """
             Sets up manual control for the rov
         """
-        self._rob_forceAPI = PhysxSchema.PhysxForceAPI.Apply(self._rob)
         self._force_cmd = keyboard_cmd(base_command=np.array([0.0, 0.0, 0.0]),
                                     input_keyboard_mapping={
                                     # forward command

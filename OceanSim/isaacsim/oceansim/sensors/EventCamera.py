@@ -178,8 +178,6 @@ class EventCamera(Camera):
         frame_time = self._current_frame["rendering_time"] # simulator time for the frame
 
         velocities: np.ndarray = self.get_velocities()
-        imu_readings = self._IMU.get_current_frame()
-        print(imu_readings)
         
         if hdr_curr.size != 0:
             on_events, off_events = self._renderer.calculate_events(hdr_curr, depths)

@@ -25,7 +25,7 @@ from isaacsim.oceansim.utils.assets_utils import get_oceansim_assets_path
 
 
 # Sensor Imports
-from isaacsim.oceansim.sensors.EventCamera import EventCamera
+from isaacsim.oceansim.sensors.UnifiedEventCamera import UnifiedEventCamera
 
 
 
@@ -304,6 +304,7 @@ class UIBuilder():
         self._rob = add_reference_to_stage(usd_path=robot_usd_path, prim_path=robot_prim_path)
         # Toggle rigid body and collider preset for robot, and set zero gravity to mimic underwater environment
         rob_rigidBody_API = PhysxSchema.PhysxRigidBodyAPI.Apply(get_prim_at_path(robot_prim_path))
+        self._rob_forceAPI = PhysxSchema.PhysxForceAPI.Apply(get_prim_at_path(robot_prim_path))
         rob_rigidBody_API.CreateDisableGravityAttr(True)
         # Set damping of the robot
         rob_rigidBody_API.GetLinearDampingAttr().Set(self._rob_linear_damping)
@@ -337,8 +338,9 @@ class UIBuilder():
             self._cam.set_focal_length(0.1 * self._cam_focal_length)
             self._cam.set_clipping_range(0.1, 100)
         if self._use_event_camera:
-            self._event_cam = EventCamera(prim_path=robot_prim_path + '/DAVIS',
-                                            translation=self._event_cam_trans)
+            # This event camera includes an IMU
+            self._event_cam = UnifiedEventCamera(prim_path=robot_prim_path + '/DAVIS',
+                                                 translation=self._event_cam_trans)
             self._event_cam.set_focal_length(0.1 * self._evcam_focal_length)
             self._event_cam.set_clipping_range(0.1, 100)
         if self._use_DVL:
@@ -373,7 +375,7 @@ class UIBuilder():
 
     def _reset_scenario(self):
         self._scenario.teardown_scenario()
-        self._scenario.setup_scenario(self._rob, self._sonar, self._event_cam, self._cam, self._DVL, self._baro, self._ctrl_mode)
+        self._scenario.setup_scenario(self._rob, self._rob_forceAPI, self._sonar, self._event_cam, self._cam, self._DVL, self._baro, self._ctrl_mode)
 
 
     def _on_post_reset_btn(self):
