@@ -25,7 +25,7 @@ from isaacsim.oceansim.utils.assets_utils import get_oceansim_assets_path
 
 
 # Sensor Imports
-from isaacsim.oceansim.sensors.NewEventCamera import EventCamera
+from isaacsim.oceansim.sensors.EventCamera import EventCamera
 
 
 
@@ -340,7 +340,6 @@ class UIBuilder():
         if self._use_event_camera:
             # This event camera includes an IMU
             self._event_cam = EventCamera(prim_path=robot_prim_path + '/DAVIS',
-                                          imu_prim_path=robot_prim_path + '/DAVIS_IMU',
                                           translation=self._event_cam_trans)
             self._event_cam.set_focal_length(0.1 * self._evcam_focal_length)
             self._event_cam.set_clipping_range(0.1, 100)

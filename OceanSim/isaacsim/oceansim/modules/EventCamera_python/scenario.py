@@ -13,7 +13,7 @@ from ....oceansim.sensors.BarometerSensor import BarometerSensor
 from ....oceansim.sensors.ImagingSonarSensor import ImagingSonarSensor
 from ....oceansim.sensors.DVLsensor import DVLsensor
 from ....oceansim.sensors.UW_Camera import UW_Camera
-from isaacsim.oceansim.sensors.NewEventCamera import EventCamera
+from isaacsim.oceansim.sensors.EventCamera import EventCamera
 
 # OceanSim imports
 from ...utils.keyboard_cmd import keyboard_cmd
