@@ -79,6 +79,7 @@ class EventCamera(Camera):
                               linear_acceleration_filter_size, angular_velocity_filter_size,
                               orientation_filter_size)
         self._writing = False
+        self._lin_vel: np.float32 = 0.0
 
 
     def initialize(self, 
@@ -184,9 +185,8 @@ class EventCamera(Camera):
         depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
         frame_time = self._current_frame["rendering_time"] # simulator time for the frame
 
-        velocities: np.ndarray = self.get_velocities()
-        # print(f"XFORM: {velocities}")
-        # print(f"IMU: {self._IMU.get_current_frame(read_gravity=False)}")
+        imu_data = self._IMU.get_current_frame(read_gravity=False)
+        velocities = self.get_velocities()
 
         
         if hdr_curr.size != 0:
@@ -237,7 +237,7 @@ class EventCamera(Camera):
 
             Returns: np.ndarray(1, 6) [lin_vel, ang_vel]
         """
-        pose = self.get_world_pose()
+        pose = self._IMU.get_world_pose()
         q_new = quaternion.from_float_array(pose[1])
         trans_new = quaternion.as_vector_part(q_new.conj() * quaternion.from_vector_part(pose[0]) * q_new)
         velocities = np.zeros(6)
