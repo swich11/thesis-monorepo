@@ -13,7 +13,7 @@ from ....oceansim.sensors.BarometerSensor import BarometerSensor
 from ....oceansim.sensors.ImagingSonarSensor import ImagingSonarSensor
 from ....oceansim.sensors.DVLsensor import DVLsensor
 from ....oceansim.sensors.UW_Camera import UW_Camera
-from ....oceansim.sensors.UnifiedEventCamera import UnifiedEventCamera
+from isaacsim.oceansim.sensors.NewEventCamera import EventCamera
 
 # OceanSim imports
 from ...utils.keyboard_cmd import keyboard_cmd
@@ -41,7 +41,7 @@ class Sensor_Scenario():
         self._controls = []
 
 
-    def setup_scenario(self, rob: Usd.Prim, rob_forceAPI, sonar: ImagingSonarSensor | None, ev_cam: UnifiedEventCamera | None, cam: UW_Camera | None, 
+    def setup_scenario(self, rob: Usd.Prim, rob_forceAPI, sonar: ImagingSonarSensor | None, ev_cam: EventCamera | None, cam: UW_Camera | None, 
                        DVL: DVLsensor | None, baro: BarometerSensor | None, ctrl_mode: str):
         self._rob = rob
         self._rob_forceAPI = rob_forceAPI

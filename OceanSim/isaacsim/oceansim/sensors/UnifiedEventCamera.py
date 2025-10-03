@@ -38,15 +38,14 @@ class UnifiedEventCamera():
         self._camera.initialize(UW_param, viewport, writing_dir, UW_yaml_path, physics_sim_view)
         self._IMU.initialize(physics_sim_view=physics_sim_view)
 
-
     def close(self) -> None:
         self._camera.close()
 
     def update(self) -> None:
-        self._camera.render()
-        print(self._IMU.get_current_frame())
+        pass
 
     def render(self) -> None:
-        self.update()
+        self._camera.render()
+        # IMU code here self._IMU.get_current_frame()
         
         

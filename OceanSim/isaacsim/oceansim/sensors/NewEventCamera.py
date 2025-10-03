@@ -23,81 +23,50 @@ from pathlib import Path
 import quaternion
 
 
-from typing import Dict # type: ignore
+from typing import Dict, Tuple, Optional # type: ignore
 
 
-# TODO: create all viewports and make them viewable (do not change outputs quite yet)
-# TODO: make output dataset path choosable
 
 
-class EventCamera(Camera, IMUSensor):
+class EventCamera(Camera):
     def __init__(self,
-                 prim_path,
-                 name = "Event_Camera",
-                 frequency = None,
-                 dt = None,
-                 resolution = (346, 260),
-                 position = None,
-                 orientation = None,
-                 translation = None,
-                 render_product_path = None,):
-        """Initialize an event camera sensor.
-    
-        Args:
-            prim_path (str): prim path of the Camera Prim to encapsulate or create.
-            name (str, optional): shortname to be used as a key by Scene class.
-                                    Note: needs to be unique if the object is added to the Scene.
-                                    Defaults to "UW_Camera".
-            frequency (Optional[int], optional): Frequency of the sensor (i.e: how often is the data frame updated).
-                                                Defaults to None.
-            dt (Optional[str], optional): dt of the sensor (i.e: period at which a the data frame updated). Defaults to None.
-            resolution (Optional[Tuple[int, int]], optional): resolution of the camera (width, height). Defaults to None.
-            position (Optional[Sequence[float]], optional): position in the world frame of the prim. shape is (3, ).
-                                                        Defaults to None, which means left unchanged.
-            translation (Optional[Sequence[float]], optional): translation in the local frame of the prim
-                                                            (with respect to its parent prim). shape is (3, ).
-                                                            Defaults to None, which means left unchanged.
-            orientation (Optional[Sequence[float]], optional): quaternion orientation in the world/ local frame of the prim
-                                                            (depends if translation or position is specified).
-                                                            quaternion is scalar-first (w, x, y, z). shape is (4, ).
-                                                            Defaults to None, which means left unchanged.
-            render_product_path (str): path to an existing render product, will be used instead of creating a new render product
-                                    the resolution and camera attached to this render product will be set based on the input arguments.
-                                    Note: Using same render product path on two Camera objects with different camera prims, resolutions is not supported
-                                    Defaults to None
-        """
-        self._name = name
-        self._res = resolution
+                 prim_path: str,
+                 imu_prim_path: str,
+                 name: str = "Event_Camera",
+                 imu_name: str = "Event_Camera_IMU",
+                 frequency: Optional[int] = None,
+                 dt: Optional[float] = None,
+                 resolution: Tuple[int, int] = (346, 260),
+                 position: Optional[np.ndarray] = None,
+                 orientation: Optional[np.ndarray] = None,
+                 translation: Optional[np.ndarray] = None,
+                 render_product_path: Optional[str] = None,
+                 linear_acceleration_filter_size: Optional[int] = 1,
+                 angular_velocity_filter_size: Optional[int] = 1,
+                 orientation_filter_size: Optional[int] = 1) -> None:
+        super().__init__(prim_path, name, frequency, dt,
+                        resolution, position, orientation, translation,
+                        render_product_path)
+        self._IMU = IMUSensor(imu_prim_path, imu_name, frequency, 
+                              dt, translation, position, orientation,
+                              linear_acceleration_filter_size,
+                              angular_velocity_filter_size,
+                              orientation_filter_size)
         self._writing = False
-        super().__init__(prim_path, name, frequency, dt, resolution, position, orientation, translation, render_product_path)
 
 
-    def initialize(self,
+    def initialize(self, 
                    UW_param: np.ndarray = np.array([0.0, 0.31, 0.24, 0.05, 0.05, 0.2, 0.05, 0.05, 0.05 ]),
                    viewport: bool = True,
-                   writing_dir: str = None,
-                   UW_yaml_path: str = None,
+                   writing_dir: Optional[str] = None,
+                   UW_yaml_path: Optional[str] = None,
                    physics_sim_view = None):
+        super().initialize(self, physics_sim_view)
+        self._IMU.initialize(physics_sim_view)
 
-        """Configure underwater rendering properties and initialize pipelines.
-
-        Args:
-            UW_param (np.ndarray, optional): Underwater parameters array:
-                [0:3] - Backscatter value (RGB)
-                [3:6] - Attenuation coefficients (RGB)
-                [6:9] - Backscatter coefficients (RGB)
-                Defaults to typical coastal water values.
-            viewport (bool, optional): Enable viewport visualization. Defaults to True.
-            writing_dir (str, optional): Directory to save camera events. Defaults to None.
-            UW_yaml_path (str, optional): Path to YAML file with water properties. Defaults to None.
-            physics_sim_view (_type_, optional): _description_. Defaults to None.            
-
-        """
         self._id: int = 0
         self._viewport = viewport
         self._device = wp.get_preferred_device()
-        super().initialize(physics_sim_view)
-
 
         if UW_yaml_path is not None:
             with open(UW_yaml_path, 'r') as file:
@@ -107,15 +76,15 @@ class EventCamera(Camera, IMUSensor):
                     backscatter_value = wp.vec3f(*yaml_content['backscatter_value'])
                     attenuation_coeff = wp.vec3f(*yaml_content['atten_coeff'])
                     backscatter_coeff = wp.vec3f(*yaml_content['backscatter_coeff'])
-                    print(f"[{self._name}] On {str(self._device)}. Using loaded render parameters:")
-                    print(f"[{self._name}] Render parameters: {yaml_content}")
+                    print(f"[{self.name}] On {str(self._device)}. Using loaded render parameters:")
+                    print(f"[{self.name}] Render parameters: {yaml_content}")
                 except yaml.YAMLError as exc:
-                    carb.log_error(f"[{self._name}] Error reading YAML file: {exc}")
+                    carb.log_error(f"[{self.name}] Error reading YAML file: {exc}")
         else:
             backscatter_value = wp.vec3f(*UW_param[0:3])
             attenuation_coeff = wp.vec3f(*UW_param[6:9])
             backscatter_coeff = wp.vec3f(*UW_param[3:6])
-            print(f'[{self._name}] On {str(self._device)}. Using default render parameters.')
+            print(f'[{self.name}] On {str(self._device)}. Using default render parameters.')
 
         self._renderer = EventRenderer(backscatter_value=backscatter_value,
                                        atten_coeff=attenuation_coeff,
@@ -155,8 +124,8 @@ class EventCamera(Camera, IMUSensor):
             }
             self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
 
-        print(f'[{self._name}] Initialized successfully. Data writing: {self._writing}')
-
+        print(f'[{self.name}] Initialized successfully. Data writing: {self._writing}')
+    
 
     def render(self):
         """Process continuous events for the time period of a single frame. Display the accumulated events in an image frame.
@@ -178,6 +147,8 @@ class EventCamera(Camera, IMUSensor):
         frame_time = self._current_frame["rendering_time"] # simulator time for the frame
 
         velocities: np.ndarray = self.get_velocities()
+        print(self._IMU.get_current_frame())
+
         
         if hdr_curr.size != 0:
             on_events, off_events = self._renderer.calculate_events(hdr_curr, depths)
@@ -205,16 +176,16 @@ class EventCamera(Camera, IMUSensor):
                 self._writing_backend.schedule(self.write_h5py_warp, data=off_events, key="OffEvents")
                 self._writing_backend.schedule(self.write_h5py_warp, data=self._annot_dict["Depths"].data, key="Depths")
                 self._writing_backend.schedule(self.write_h5py_warp, data=self._annot_dict["MotionFlow"].data, key="MotionFlow")
-                print(f'[{self._name}] [{self._id}] events saved to {self._writing_backend.output_dir}')
+                print(f'[{self.name}] [{self._id}] events saved to {self._writing_backend.output_dir}')
                 
             self._id += 1
 
 
     def draw_motion_flow(self, flow: np.ndarray) -> np.ndarray:
-        output = np.zeros((self._res[1], self._res[0], 4), dtype=np.uint8)
+        output = np.zeros((self._resolution[1], self._resolution[0], 4), dtype=np.uint8)
         output[:, :, 3] = 255
-        for i in range(0, self._res[0] - 12, 12):
-            for j in range(0, self._res[1] - 12, 12):
+        for i in range(0, self._resolution[0] - 12, 12):
+            for j in range(0, self._resolution[1] - 12, 12):
                 average = np.int8(np.average(flow[j:(j+12), i:(i+12)], axis=(1, 0)))
                 cv2.arrowedLine(output, (i + 6, j + 6), (i + 6 + average[0], j + 6 + average[1]), 
                                 color=(255, 255, 255, 255), thickness=1, tipLength=0.3)
@@ -360,4 +331,3 @@ class EventCamera(Camera, IMUSensor):
         Returns -> None
         """
         file.close()
-
