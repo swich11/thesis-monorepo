@@ -12,10 +12,10 @@ from typing import List
 class OpticalFlowNet(nn.Module):
     def __init__(self, depth: int = 4):
         super().__init__()
-        self.depth = 4
+        self.depth = depth
         input_channels = 2
         output_channels = 64
-        spike_grad = surrogate.FastSigmoid()
+        spike_grad = surrogate.fast_sigmoid()
         self.encoder_layers = [nn.Sequential(
             nn.Conv2d(input_channels, output_channels, 3),
             snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=True),
@@ -34,7 +34,7 @@ class OpticalFlowNet(nn.Module):
                 snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=True),
             ))
         # add the upconvolution to the last encoder layer
-        self.encoder_layers[-1].append(nn.ConvTranspose2d(output_channels, output_channels // 2, 2))
+        self.encoder_layers[-1].append(nn.ConvTranspose2d(output_channels, output_channels // 2, 2, 2))
 
         self.decoder_layers: List[nn.Sequential] = []
         for _ in range(depth - 1):
@@ -45,7 +45,7 @@ class OpticalFlowNet(nn.Module):
                 nn.ReLU(),
                 nn.Conv2d(output_channels, output_channels, 3),
                 nn.ReLU(),
-                nn.ConvTranspose2d(output_channels, output_channels // 2, 2)
+                nn.ConvTranspose2d(output_channels, output_channels // 2, 2, 2)
             ))
         # Last layer set for optical flow output
         input_channels = output_channels
@@ -55,20 +55,29 @@ class OpticalFlowNet(nn.Module):
             nn.ReLU(),
             nn.Conv2d(output_channels, output_channels, 3),
             nn.ReLU(),
-            nn.Conv2d(input_channels, 2, 1)
+            nn.Conv2d(output_channels, 2, 1)
         ))
+        self.decoder_layers.reverse()
 
 
     def forward(self, x):
         return self._forward_recurse(x, 0)
         
 
-    def _forward_recurse(self, x, n) -> torch.Tensor:
+    def _forward_recurse(self, x: torch.Tensor, n: int) -> torch.Tensor:
         # Pass through encoder layer, -> output accumulator -> decoder layer
         #                             -> next layer
-        if n >= self.depth:
-            return x
         x = self.encoder_layers[n](x)
-        x = self.decoder_layers[n](torch.cat([x, self._forward_recurse(x, n + 1)], dim=1))
+        if n == self.depth:
+            return x
+        y = self._forward_recurse(x, n + 1)
+        wd = (x.shape[3] - y.shape[3]) // 2 # crop the skip connection
+        x = self.decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], y], dim=1))
         return x
 
+
+if __name__ == "__main__":
+    net = OpticalFlowNet(4)
+    x = torch.randn(1, 2, 572, 572)
+    y: torch.Tensor = net(x)
+    y.mean().backward()
