@@ -6,11 +6,13 @@ import torch.nn as nn
 import snntorch as snn
 from snntorch import surrogate
 
+from typing import List
+
 
 class OpticalFlowNet(nn.Module):
-    def __init__(self):
+    def __init__(self, depth: int = 4):
         super().__init__()
-        depth = 4
+        self.depth = 4
         input_channels = 2
         output_channels = 64
         spike_grad = surrogate.FastSigmoid()
@@ -34,7 +36,7 @@ class OpticalFlowNet(nn.Module):
         # add the upconvolution to the last encoder layer
         self.encoder_layers[-1].append(nn.ConvTranspose2d(output_channels, output_channels // 2, 2))
 
-        self.decoder_layers = []
+        self.decoder_layers: List[nn.Sequential] = []
         for _ in range(depth - 1):
             input_channels = output_channels
             output_channels = input_channels // 2
@@ -64,7 +66,7 @@ class OpticalFlowNet(nn.Module):
     def _forward_recurse(self, x, n) -> torch.Tensor:
         # Pass through encoder layer, -> output accumulator -> decoder layer
         #                             -> next layer
-        if n >= 4:
+        if n >= self.depth:
             return x
         x = self.encoder_layers[n](x)
         x = self.decoder_layers[n](torch.cat([x, self._forward_recurse(x, n + 1)], dim=1))
