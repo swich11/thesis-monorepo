@@ -1,4 +1,4 @@
-# Hybrid SNN-DNN network for optical flow
+# Hybrid SNN-DNN network for depth map
 
 import torch
 import torch.nn as nn
@@ -9,14 +9,14 @@ from snntorch import surrogate
 from typing import List
 
 
-class OpticalFlowNet(nn.Module):
+class DepthMapNet(nn.Module):
     def __init__(self, depth: int = 4):
         super().__init__()
         self.depth = depth
         input_channels = 2
         output_channels = 64
         spike_grad = surrogate.fast_sigmoid()
-
+        
         self.encoder_layers = [nn.Sequential(
             nn.Conv2d(input_channels, output_channels, 3),
             snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=True),
@@ -56,7 +56,7 @@ class OpticalFlowNet(nn.Module):
             nn.ReLU(),
             nn.Conv2d(output_channels, output_channels, 3),
             nn.ReLU(),
-            nn.Conv2d(output_channels, 2, 1) # 2 output channels for optical flow
+            nn.Conv2d(output_channels, 1, 1) # 1 output channel for depth map
         ))
         self.decoder_layers.reverse()
 
@@ -79,7 +79,13 @@ class OpticalFlowNet(nn.Module):
 
 # Testing works
 if __name__ == "__main__":
-    net = OpticalFlowNet(4)
+    net = DepthMapNet(4)
     x = torch.randn(1, 2, 572, 572)
     y: torch.Tensor = net(x)
     y.mean().backward()
+
+
+
+
+
+

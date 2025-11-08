@@ -1,4 +1,9 @@
-# Hybrid SNN-DNN network for optical flow
+# Hybrid SNN-DNN network for Optical Flow with last velocity input on the decoder
+# layers
+
+
+# Encoder layers -> Decoder layers with velocity input on each layer
+
 
 import torch
 import torch.nn as nn
@@ -42,7 +47,7 @@ class OpticalFlowNet(nn.Module):
             input_channels = output_channels
             output_channels = input_channels // 2
             self.decoder_layers.append(nn.Sequential(
-                nn.Conv2d(input_channels, output_channels, 3),
+                nn.Conv2d(input_channels + 6, output_channels, 3), # add 6 for velocity input channels
                 nn.ReLU(),
                 nn.Conv2d(output_channels, output_channels, 3),
                 nn.ReLU(),
@@ -52,7 +57,7 @@ class OpticalFlowNet(nn.Module):
         input_channels = output_channels
         output_channels = input_channels // 2
         self.decoder_layers.append(nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, 3),
+            nn.Conv2d(input_channels + 6, output_channels, 3), # add 6 for velocity input channels
             nn.ReLU(),
             nn.Conv2d(output_channels, output_channels, 3),
             nn.ReLU(),
@@ -61,19 +66,19 @@ class OpticalFlowNet(nn.Module):
         self.decoder_layers.reverse()
 
 
-    def forward(self, x):
-        return self._forward_recurse(x, 0)
+    def forward(self, x, v):
+        return self._forward_recurse(x, v, 0)
         
 
-    def _forward_recurse(self, x: torch.Tensor, n: int) -> torch.Tensor:
+    def _forward_recurse(self, x: torch.Tensor, v: torch.Tensor, n: int) -> torch.Tensor:
         # Pass through encoder layer, -> output accumulator -> decoder layer
         #                             -> next layer
         x = self.encoder_layers[n](x)
         if n == self.depth:
             return x
-        y = self._forward_recurse(x, n + 1)
+        y = self._forward_recurse(x, v, n + 1)
         wd = (x.shape[3] - y.shape[3]) // 2 # crop the skip connection
-        x = self.decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], y], dim=1))
+        x = self.decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], y, v], dim=1))
         return x
 
 

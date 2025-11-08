@@ -1,4 +1,9 @@
-# Hybrid SNN-DNN network for optical flow
+# Hybrid SNN-DNN network for depth map using latest velocity estimate
+# as input to the network.
+
+
+
+# Encoder Layers -> Decoder Layers with Velocities.
 
 import torch
 import torch.nn as nn
@@ -9,14 +14,14 @@ from snntorch import surrogate
 from typing import List
 
 
-class OpticalFlowNet(nn.Module):
+class DepthMapNet(nn.Module):
     def __init__(self, depth: int = 4):
         super().__init__()
         self.depth = depth
         input_channels = 2
         output_channels = 64
         spike_grad = surrogate.fast_sigmoid()
-
+        
         self.encoder_layers = [nn.Sequential(
             nn.Conv2d(input_channels, output_channels, 3),
             snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=True),
@@ -42,7 +47,7 @@ class OpticalFlowNet(nn.Module):
             input_channels = output_channels
             output_channels = input_channels // 2
             self.decoder_layers.append(nn.Sequential(
-                nn.Conv2d(input_channels, output_channels, 3),
+                nn.Conv2d(input_channels + 6, output_channels, 3), # add 6 for velocity input channel
                 nn.ReLU(),
                 nn.Conv2d(output_channels, output_channels, 3),
                 nn.ReLU(),
@@ -52,34 +57,36 @@ class OpticalFlowNet(nn.Module):
         input_channels = output_channels
         output_channels = input_channels // 2
         self.decoder_layers.append(nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, 3),
+            nn.Conv2d(input_channels + 6, output_channels, 3), # add 6 for velocity input channel
             nn.ReLU(),
             nn.Conv2d(output_channels, output_channels, 3),
             nn.ReLU(),
-            nn.Conv2d(output_channels, 2, 1) # 2 output channels for optical flow
+            nn.Conv2d(output_channels, 1, 1) # 1 output channel for depth map
         ))
         self.decoder_layers.reverse()
 
 
-    def forward(self, x):
-        return self._forward_recurse(x, 0)
+    def forward(self, x, v):
+        return self._forward_recurse(x, v, 0)
         
 
-    def _forward_recurse(self, x: torch.Tensor, n: int) -> torch.Tensor:
+    def _forward_recurse(self, x: torch.Tensor, v: torch.Tensor, n: int) -> torch.Tensor:
         # Pass through encoder layer, -> output accumulator -> decoder layer
         #                             -> next layer
         x = self.encoder_layers[n](x)
         if n == self.depth:
             return x
-        y = self._forward_recurse(x, n + 1)
+        y = self._forward_recurse(x, v, n + 1)
         wd = (x.shape[3] - y.shape[3]) // 2 # crop the skip connection
-        x = self.decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], y], dim=1))
+
+        x = self.decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], y, v], dim=1)) # added velocity input on this step
         return x
 
 
 # Testing works
 if __name__ == "__main__":
-    net = OpticalFlowNet(4)
+    net = DepthMapNet(4)
     x = torch.randn(1, 2, 572, 572)
-    y: torch.Tensor = net(x)
+    v = torch.randn(1, 6)
+    y: torch.Tensor = net(x, v)
     y.mean().backward()
