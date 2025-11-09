@@ -10,6 +10,7 @@ from isaacsim.core.prims import SingleRigidPrim
 
 from isaacsim.oceansim.utils.TuplePair import TuplePair
 from isaacsim.oceansim.utils.quaternion import angular_velocities
+from isaacsim.oceansim.utils.DataBackend import DataBackend
 from isaacsim.oceansim.render.EventRenderer import EventRenderer
 
 
@@ -85,7 +86,7 @@ class EventCamera(Camera):
     def initialize(self, 
                    UW_param: np.ndarray = np.array([0.0, 0.31, 0.24, 0.05, 0.05, 0.2, 0.05, 0.05, 0.05 ]),
                    viewport: bool = True,
-                   writing_dir: Optional[str] = None,
+                   writing_dir: Optional[str] = "/home/julian/thesis-monorepo/datasets",
                    UW_yaml_path: Optional[str] = None,
                    physics_sim_view = None) -> None:
         """Configure underwater rendering properties and initialize pipelines. Initialize IMU
@@ -105,6 +106,7 @@ class EventCamera(Camera):
 
         self._id: int = 0
         self._viewport = viewport
+        self._writing_dir = writing_dir
         self._device = wp.get_preferred_device()
 
         if UW_yaml_path is not None:
@@ -151,17 +153,34 @@ class EventCamera(Camera):
 
         if writing_dir is not None:
             self._writing = True
-            self._writing_backend = rep.BackendDispatch()
+            rep.backends.BackendRegistry.register_backend(DataBackend)
+            self._writing_backend = rep.BackendDispatch(output_dir=writing_dir)
             self._write_dict = {
-                "OnEvents": TuplePair((np.bool_, (1, self._resolution[0], self._resolution[1]))),
-                "OffEvents": TuplePair((np.bool_, (1, self._resolution[0], self._resolution[1]))),
-                "Depths": TuplePair((np.float32, (1, self._resolution[0], self._resolution[1]))),
-                "MotionFlow": TuplePair((np.float32, (4, self._resolution[0], self._resolution[1]))),
-                "Velocities": TuplePair((np.float32, (6, 1))),
-                # "FrameTimes"
-                # "AccelerometerReadings"
+                "OnEvents": TuplePair((np.bool_, (self._resolution[1], self._resolution[0]))),
+                "OffEvents": TuplePair((np.bool_, (self._resolution[1], self._resolution[0]))),
+                "Depths": TuplePair((np.float32, (self._resolution[1], self._resolution[0]))),
+                "MotionFlow": TuplePair((np.float32, (self._resolution[1], self._resolution[0], 4))),
+                "Velocities": TuplePair((np.float32, (6,))),
+                "RenderTime": TuplePair((np.float32,(1,))),
+                "IMUTime": TuplePair((np.float32, (1,))),
+                "IMULinearAcceleration": TuplePair((np.float32, (3,))),
+                "IMUAngularVelocity": TuplePair((np.float32, (3,))),
             }
-            self.open_h5py(Path(writing_dir, "sim_dataset").resolve())
+            self._write_buffers = {
+                "OnEvents": [],
+                "OffEvents": [],
+                "Depths": [],
+                "MotionFlow": [],
+                "Velocities": [],
+                "RenderTime": [],
+                "IMUTime": [],
+                "IMULinearAcceleration": [],
+                "IMUAngularVelocity": [],
+            }
+
+
+
+            self.open_h5py(Path(writing_dir, "oceansim_dataset.h5py").resolve())
 
         print(f'[{self.name}] Initialized successfully. Data writing: {self._writing}')
     
@@ -180,10 +199,10 @@ class EventCamera(Camera):
         """
         for key in self._annot_dict.keys():
             self._annot_dict[key].data = self._annot_dict[key][0].get_data()
-        ldr = self._rgb_annotator.get_data() # from the Camera class
-        hdr_curr = self._annot_dict["HdrColor"].data
-        depths = self._annot_dict["Dists"].data # distance to camera for water attenuation
-        frame_time = self._current_frame["rendering_time"] # simulator time for the frame
+        # ldr = self._rgb_annotator.get_data() # from the Camera class
+        hdr_curr: wp.array = self._annot_dict["HdrColor"].data
+        depths: wp.array = self._annot_dict["Dists"].data # distance to camera for water attenuation
+        frame_time: float = self._current_frame["rendering_time"] # simulator time for the frame
 
         imu_data = self._IMU.get_current_frame(read_gravity=False)
         velocities = self.get_velocities()
@@ -208,14 +227,18 @@ class EventCamera(Camera):
 
 
             if self._writing:
-                # write all the data required from the renderer -> need to include base velocities here
-                # need to add sim times here aswell
-                self._writing_backend.schedule(self.write_h5py_numpy, data=velocities, key="Velocities")
-                self._writing_backend.schedule(self.write_h5py_warp, data=on_events, key="OnEvents")
-                self._writing_backend.schedule(self.write_h5py_warp, data=off_events, key="OffEvents")
-                self._writing_backend.schedule(self.write_h5py_warp, data=self._annot_dict["Depths"].data, key="Depths")
-                self._writing_backend.schedule(self.write_h5py_warp, data=self._annot_dict["MotionFlow"].data, key="MotionFlow")
-                print(f'[{self.name}] [{self._id}] events saved to {self._writing_backend.output_dir}')
+                data_dict = {
+                    "RenderTime": np.array(frame_time),
+                    "IMULinearAcceleration": imu_data["lin_acc"],
+                    "IMUAngularVelocity": imu_data["ang_vel"],
+                    "IMUTime": imu_data["time"],
+                    "Velocities": velocities,
+                    "OnEvents": on_events.numpy(),
+                    "OffEvents": off_events.numpy(),
+                    "Depths": self._annot_dict["Depths"].data.numpy(),
+                    "MotionFlow": self._annot_dict["MotionFlow"].data.numpy(),
+                }
+                self._writing_backend.schedule(self.write_data, data_dict)
                 
             self._id += 1
 
@@ -285,17 +308,9 @@ class EventCamera(Camera):
     def make_viewports(self) -> None:
         self._wrapped_ui_elements = []
         self._image_providers: Dict[str, ui.ByteImageProvider] = {}
-
         self.make_image_viewport("Events")
         self.make_image_viewport("Depths")
         self.make_image_viewport("MotionFlow")
-
-
-        # TODO: Move Graph Viewports to a velocity logging class
-        # self.make_graph_viewport("IMU_Linear")
-        # self.make_graph_viewport("IMU_Angular")
-        # self.make_graph_viewport("GroundTruthLinear")
-        # self.make_graph_viewport("GroundTruthAngular")
 
 
     def close(self):
@@ -341,7 +356,7 @@ class EventCamera(Camera):
                                                                 shape=tuple([0] + data_shape),
                                                                 dtype=self._write_dict[key][0],
                                                                 maxshape=tuple([None] + data_shape),
-                                                                compression="lzf",        
+                                                                compression="lzf",      
             ) # this will autochunk and autocompress
                                         
 
@@ -351,7 +366,6 @@ class EventCamera(Camera):
 
             Returns -> None
         """
-        data: np.ndarray = data.numpy()  # convert to numpy array
         self.write_h5py_numpy(data.numpy(), key)
 
 
@@ -359,14 +373,38 @@ class EventCamera(Camera):
         """
             Write numpy array to h5py file format. The key defines the dataset group to store into. 
         """
+        self._write_buffers[key].append(data)
+        if (len(self._write_buffers[key]) == 64):
+            self.write_from_buffer(self._write_buffers[key].copy(), key)
+            self._write_buffers[key] = []
+
+
+    def write_data(self, data_dict: dict) -> None:
+        for key in data_dict.keys():
+            self.write_h5py_numpy(data_dict[key], key)
+
+
+    def write_from_buffer(self, buffer: list, key: str) -> None:
+        length = len(buffer)
         dset: h5py.Dataset = self._write_dict[key].data
-        dset.resize(tuple([dset.shape[0] + 1]) + dset.shape[1:len(dset.shape)]) # add 1 to dataset shape
-        dset[-1] = data
+        start = dset.shape[0]
+        dset.resize((dset.shape[0] + length, *dset.shape[1:]))
+        stack = np.stack(buffer, axis=0)
+        if (len(stack.shape) == 1):
+            stack = np.expand_dims(stack, axis=1)
+        dset[start:] = stack
 
 
-    def close_h5py(self, file: h5py.File) -> None:
+    def close_h5py(self) -> None:
         """Close the h5py dataset for the run
 
         Returns -> None
         """
-        file.close()
+        # Write remaining data
+        for key in self._write_dict.keys():
+            self.write_from_buffer(self._write_buffers[key], key)
+        print(f"Waiting for dataset writing to finish...")
+        while (self._writing_backend.is_done_writing()):
+            pass
+        print(f"Writing to {self._writing_dir} completed. :)")
+        self._dataset_file.close()

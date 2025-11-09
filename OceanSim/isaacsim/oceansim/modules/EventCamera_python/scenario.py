@@ -198,12 +198,12 @@ class Sensor_Scenario():
                 SingleRigidPrim(prim_path=get_prim_path(self._rob)).set_linear_velocity(np.array([0.5,0,0]))
             case "Controller":
                 commands = self._gamepad.get_gamepad_output()
-                force_cmd = 20 * Gf.Vec3f(commands[GamepadInput.LEFT_STICK_UP] - commands[GamepadInput.LEFT_STICK_DOWN],
+                force_cmd = 10*Gf.Vec3f(commands[GamepadInput.LEFT_STICK_UP] - commands[GamepadInput.LEFT_STICK_DOWN],
                                      commands[GamepadInput.LEFT_STICK_LEFT] - commands[GamepadInput.LEFT_STICK_RIGHT],
                                      commands[GamepadInput.RIGHT_STICK_UP] - commands[GamepadInput.RIGHT_STICK_DOWN])
-                torque_cmd = 20 * Gf.Vec3f(commands[GamepadInput.RIGHT_SHOULDER] - commands[GamepadInput.LEFT_SHOULDER],
-                                           commands[GamepadInput.RIGHT_TRIGGER] - commands[GamepadInput.LEFT_TRIGGER],
-                                           commands[GamepadInput.RIGHT_STICK_LEFT] - commands[GamepadInput.RIGHT_STICK_RIGHT])
+                torque_cmd = 10*Gf.Vec3f(commands[GamepadInput.RIGHT_SHOULDER] - commands[GamepadInput.LEFT_SHOULDER],
+                                      commands[GamepadInput.RIGHT_TRIGGER] - commands[GamepadInput.LEFT_TRIGGER],
+                                      commands[GamepadInput.RIGHT_STICK_LEFT] - commands[GamepadInput.RIGHT_STICK_RIGHT])
                 self._rob_forceAPI.CreateForceAttr().Set(force_cmd)
                 self._rob_forceAPI.CreateTorqueAttr().Set(torque_cmd)
 
