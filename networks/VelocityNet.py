@@ -99,10 +99,6 @@ class VelocityNet(nn.Module):
         )
 
 
-
-
-
-
     def forward(self, x, v):
         (d, o) = self._forward_recurse_unet(x, v, 0)
         v_out = self._forward_velocity_step(d, o)
@@ -118,23 +114,40 @@ class VelocityNet(nn.Module):
         if n == self.depth:
             return (x, x)
 
-        d, o = self._forward_recurse_unet(x, v, n)       
-        # crop the skip connection 
-        wd = (x.shape[3] - x.shape[3]) // 2
-        x = x[:, :, wd:-wd, wd:-wd]
-        # infer on the decoder layer
-        d = self.depth_decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], d, v], dim=1))
-        o = self.optical_decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], o, v], dim=1))
+        d, o = self._forward_recurse_unet(x, v, n + 1)    
+        # Crop the skip connection, assumes d and o have same shape
+        wd_x = (x.shape[2] - d.shape[2])
+        wd_y = (x.shape[3] - d.shape[3])
+        wd_xi = wd_x // 2
+        wd_yi = wd_y // 2
+        wd_xj = wd_xi + 1 if (wd_x % 2) else wd_xi
+        wd_yj = wd_yi + 1 if (wd_y % 2) else wd_yi
+
+        x = torch.cat([x[:, :, wd_xi:-wd_xj, wd_yi:-wd_yj]])
+
+        v = v.unsqueeze(-1).unsqueeze(-1) # add 2 spatial dimensions
+        v = v.expand(-1, -1, d.shape[2], d.shape[3])
+
+        d = self.depth_decoder_layers[n](torch.cat([x, d, v], dim=1))
+        o = self.optical_decoder_layers[n](torch.cat([x, o, v], dim=1))
+
         return (d, o)
 
 
-    def _forward_velocity_step(self, d, o) -> torch.Tensor:
+    def _forward_velocity_step(self, d: torch.Tensor, o: torch.Tensor) -> torch.Tensor:
         return self.velocity_layers(torch.cat([d, o], dim=1))
 
 
 # Testing works
 if __name__ == "__main__":
     net = VelocityNet(4)
-    x = torch.randn(1, 2, 572, 572)
-    y: torch.Tensor = net(x)
-    y.mean().backward()
+    x = torch.randn(1, 2, 346, 260)
+    v = torch.randn(1, 6)
+    v_out: torch.Tensor
+    d: torch.Tensor
+    o: torch.Tensor
+    v_out, d, o = net(x, v)
+    print(v_out.shape)
+    print(d.shape)
+    print(o.shape)
+    v_out.mean().backward()
