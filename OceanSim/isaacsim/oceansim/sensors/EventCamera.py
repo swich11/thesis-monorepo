@@ -356,6 +356,7 @@ class EventCamera(Camera):
                                                                 shape=tuple([0] + data_shape),
                                                                 dtype=self._write_dict[key][0],
                                                                 maxshape=tuple([None] + data_shape),
+                                                                chunks=(64, *data_shape),
                                                                 compression="lzf",      
             ) # this will autochunk and autocompress
                                         
