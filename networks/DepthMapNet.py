@@ -16,10 +16,6 @@ class DepthMapNet(nn.Module):
         self.depth = depth
 
         # parameters for keeping track of crop amount (for calculating losses)
-        self.wd_xi_total = 0
-        self.wd_xj_total = 0
-        self.wd_yi_total = 0
-        self.wd_yj_total = 0
 
 
         input_channels = 2
@@ -75,6 +71,9 @@ class DepthMapNet(nn.Module):
         
 
     def _forward_recurse(self, x: torch.Tensor, n: int) -> torch.Tensor:
+        """
+            Recursive call to U-Net structure.
+        """
         # Pass through encoder layer, -> output accumulator -> decoder layer
         #                             -> next layer
         x = self.encoder_layers[n](x)
@@ -94,6 +93,10 @@ class DepthMapNet(nn.Module):
     
 
     def backward(self, d_res: torch.Tensor, d_real: torch.Tensor) -> None:
+        """
+            Call this after the forward pass to perform the backwards pass
+            to train the network.
+        """
         # crop code
         wd_x = (d_real.shape[2] - d_res.shape[2])
         wd_y = (d_real.shape[3] - d_res.shape[3])
