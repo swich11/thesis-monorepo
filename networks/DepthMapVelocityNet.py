@@ -14,7 +14,7 @@ from snntorch import surrogate
 from typing import List
 
 
-class DepthMapNet(nn.Module):
+class DepthMapVelocityNet(nn.Module):
     def __init__(self, depth: int = 4):
         super().__init__()
         self.depth = depth
@@ -77,16 +77,29 @@ class DepthMapNet(nn.Module):
         if n == self.depth:
             return x
         y = self._forward_recurse(x, v, n + 1)
-        wd = (x.shape[3] - y.shape[3]) // 2 # crop the skip connection
+        # Crop the skip connection
+        wd_x = (x.shape[2] - y.shape[2])
+        wd_y = (x.shape[3] - y.shape[3])
+        wd_xi = wd_x // 2
+        wd_yi = wd_y // 2
+        wd_xj = wd_xi + 1 if (wd_x % 2) else wd_xi
+        wd_yj = wd_yi + 1 if (wd_y % 2) else wd_yi
 
-        x = self.decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], y, v], dim=1)) # added velocity input on this step
+        x = torch.cat([x[:, :, wd_xi:-wd_xj, wd_yi:-wd_yj], y], dim=1)
+
+        v = v.unsqueeze(-1).unsqueeze(-1) # add 2 spatial dimensions
+        v = v.expand(-1, -1, x.shape[2], x.shape[3]) # match height and width
+        
+        # concatenate on input channels, combining image and velocity
+        x = self.decoder_layers[n](torch.cat([x, v], dim=1))
         return x
 
 
 # Testing works
 if __name__ == "__main__":
-    net = DepthMapNet(4)
-    x = torch.randn(1, 2, 572, 572)
+    net = DepthMapVelocityNet(4)
+    x = torch.randn(1, 2, 346, 260)
     v = torch.randn(1, 6)
     y: torch.Tensor = net(x, v)
+    print(y.shape)
     y.mean().backward()

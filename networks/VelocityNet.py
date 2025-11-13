@@ -109,7 +109,7 @@ class VelocityNet(nn.Module):
         return (v_out, d, o)
         
 
-    def _forward_recurse_unet(self, x: torch.Tensor, v: torch.Tensor, n: int) -> Tuple[torch.Tensor]:
+    def _forward_recurse_unet(self, x: torch.Tensor, v: torch.Tensor, n: int) -> Tuple[torch.Tensor, torch.Tensor]:
         # Pass through encoder layer -> output accumulator -> optic decoder layers
         #                                                  -> depth decoder layers
         # depths ->
@@ -118,7 +118,7 @@ class VelocityNet(nn.Module):
         if n == self.depth:
             return (x, x)
 
-        d, o = self._forward_recurse_unet(self, x, v, n)       
+        d, o = self._forward_recurse_unet(x, v, n)       
         # crop the skip connection 
         wd = (x.shape[3] - x.shape[3]) // 2
         x = x[:, :, wd:-wd, wd:-wd]

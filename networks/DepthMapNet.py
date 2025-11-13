@@ -72,16 +72,24 @@ class DepthMapNet(nn.Module):
         if n == self.depth:
             return x
         y = self._forward_recurse(x, n + 1)
-        wd = (x.shape[3] - y.shape[3]) // 2 # crop the skip connection
-        x = self.decoder_layers[n](torch.cat([x[:, :, wd:-wd, wd:-wd], y], dim=1))
+        # crop the skip connection 
+        wd_x = (x.shape[2] - y.shape[2])
+        wd_y = (x.shape[3] - y.shape[3])
+        wd_xi = wd_x // 2
+        wd_yi = wd_y // 2
+        wd_xj = wd_xi + 1 if (wd_x % 2) else wd_xi
+        wd_yj = wd_yi + 1 if (wd_y % 2) else wd_yi
+
+        x = self.decoder_layers[n](torch.cat([x[:, :, wd_xi:-wd_xj, wd_yi:-wd_yj], y], dim=1))
         return x
 
 
 # Testing works
 if __name__ == "__main__":
     net = DepthMapNet(4)
-    x = torch.randn(1, 2, 572, 572)
+    x = torch.randn(1, 2, 346, 260)
     y: torch.Tensor = net(x)
+    print(y.shape)
     y.mean().backward()
 
 
