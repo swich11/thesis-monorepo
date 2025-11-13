@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+import torchvision.transforms.functional as F
 
 import snntorch as snn
 from snntorch import surrogate
@@ -13,6 +14,14 @@ class DepthMapNet(nn.Module):
     def __init__(self, depth: int = 4):
         super().__init__()
         self.depth = depth
+
+        # parameters for keeping track of crop amount (for calculating losses)
+        self.wd_xi_total = 0
+        self.wd_xj_total = 0
+        self.wd_yi_total = 0
+        self.wd_yj_total = 0
+
+
         input_channels = 2
         output_channels = 64
         spike_grad = surrogate.fast_sigmoid()
@@ -82,6 +91,29 @@ class DepthMapNet(nn.Module):
 
         x = self.decoder_layers[n](torch.cat([x[:, :, wd_xi:-wd_xj, wd_yi:-wd_yj], y], dim=1))
         return x
+    
+
+    def backward(self, d_res: torch.Tensor, d_real: torch.Tensor) -> None:
+        # crop code
+        wd_x = (d_real.shape[2] - d_res.shape[2])
+        wd_y = (d_real.shape[3] - d_res.shape[3])
+        wd_xi = wd_x // 2
+        wd_yi = wd_y // 2
+        wd_xj = wd_xi + 1 if (wd_x % 2) else wd_xi
+        wd_yj = wd_yi + 1 if (wd_y % 2) else wd_yi
+
+        # crop d_real to size of d_res
+        d_real = d_real[:, :, wd_xi:-wd_xj, wd_yi:-wd_yj]
+        assert(d_res.shape == d_real.shape)
+
+        # apply gaussian smoothing on the result to ensure it doesn't overfit
+        # we are not trying to get a 1 to 1 depth map here
+        # just a very good, averaged approximation
+        d_res_blur = F.gaussian_blur(d_res, [5, 5])
+        loss: torch.Tensor = torch.linalg.norm((d_res_blur - d_real), 2, dim=(2, 3))
+        # this doesn't really work for these purposes. We don't need a spicy depth map
+        loss.backward()
+
 
 
 # Testing works
@@ -89,8 +121,7 @@ if __name__ == "__main__":
     net = DepthMapNet(4)
     x = torch.randn(1, 2, 346, 260)
     y: torch.Tensor = net(x)
-    print(y.shape)
-    y.mean().backward()
+    net.backward(y, torch.randn(1, 1, 346, 260))
 
 
 
