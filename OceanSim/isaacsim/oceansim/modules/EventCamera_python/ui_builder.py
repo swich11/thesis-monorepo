@@ -186,7 +186,7 @@ class UIBuilder():
                 self._ctrl_mode_model = dropdown_builder(
                     label='Control Mode',
                     default_val=3,
-                    items=['No control', 'Straight line', 'Waypoints', 'Manual control'],
+                    items=['No control', 'Straight line', 'Waypoints', 'Manual control', 'Controller'],
                     tooltip='Select preferred control mode',
                     on_clicked_fn=self._on_ctrl_mode_dropdown_clicked
                 )

@@ -33,7 +33,7 @@ class GamePad:
         
         self._input = carb.input.acquire_input_interface()
         self._gamepad_connection_sub = self._input.subscribe_to_gamepad_connection_events(self._gamepad_connection_event_callback)
-        self._gamepad = self._appwindow.get_gamepad()
+        self._gamepad = self._appwindow.get_gamepad(0)
         if self._gamepad:
             self._gamepad_event_sub = self._input.subscribe_to_gamepad_events(self._gamepad, self._gamepad_event_callback)
 
