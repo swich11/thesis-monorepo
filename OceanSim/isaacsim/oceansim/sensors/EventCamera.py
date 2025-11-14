@@ -376,8 +376,7 @@ class EventCamera(Camera):
         """
         self._write_buffers[key].append(data)
         if (len(self._write_buffers[key]) == 64):
-            self.write_from_buffer(self._write_buffers[key].copy(), key)
-            self._write_buffers[key] = []
+            self.write_from_buffer(self._write_buffers[key], key, 64)
 
 
     def write_data(self, data_dict: dict) -> None:
@@ -385,8 +384,7 @@ class EventCamera(Camera):
             self.write_h5py_numpy(data_dict[key], key)
 
 
-    def write_from_buffer(self, buffer: list, key: str) -> None:
-        length = len(buffer)
+    def write_from_buffer(self, buffer: list, key: str, length: int) -> None:
         dset: h5py.Dataset = self._write_dict[key].data
         start = dset.shape[0]
         dset.resize((dset.shape[0] + length, *dset.shape[1:]))
@@ -394,6 +392,7 @@ class EventCamera(Camera):
         if (len(stack.shape) == 1):
             stack = np.expand_dims(stack, axis=1)
         dset[start:] = stack
+        self._write_buffers[key] = self._write_buffers[key][length:]
 
 
     def close_h5py(self) -> None:
@@ -403,8 +402,9 @@ class EventCamera(Camera):
         """
         # Write remaining data
         for key in self._write_dict.keys():
-            if (len(self._write_buffers[key]) > 0):
-                self.write_from_buffer(self._write_buffers[key], key)
+            length = len(self._write_buffers[key])
+            if (length > 0):
+                self.write_from_buffer(self._write_buffers[key], key), length
         print(f"Waiting for dataset writing to finish...")
         while (not self._writing_backend.is_done_writing()):
             pass
