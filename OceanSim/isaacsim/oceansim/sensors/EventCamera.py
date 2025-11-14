@@ -81,6 +81,7 @@ class EventCamera(Camera):
                               orientation_filter_size)
         self._writing = False
         self._lin_vel: np.float32 = 0.0
+        self._dataset_count = 0
 
 
     def initialize(self, 
@@ -180,7 +181,7 @@ class EventCamera(Camera):
 
 
 
-            self.open_h5py(Path(writing_dir, "oceansim_dataset.h5py").resolve())
+            self.open_h5py(Path(writing_dir).resolve())
 
         print(f'[{self.name}] Initialized successfully. Data writing: {self._writing}')
     
@@ -345,10 +346,10 @@ class EventCamera(Camera):
     def open_h5py(self, path: str):
         """Create the h5py dataset on path. Destroys dataset if it already exists.
         
-        Returns -> None
+            Returns -> None
         """
         # TODO: filter dir for no overwrites
-        self._dataset_file = h5py.File(path, 'w')
+        self._dataset_file = h5py.File(f"{path}/dataset{self._dataset_count}.hdf5", 'w')
         for key in self._write_dict.keys():
             data_shape = list(self._write_dict[key][1])
             self._write_dict[key].data = self._dataset_file.create_dataset(
@@ -356,7 +357,6 @@ class EventCamera(Camera):
                                                                 shape=tuple([0] + data_shape),
                                                                 dtype=self._write_dict[key][0],
                                                                 maxshape=tuple([None] + data_shape),
-                                                                chunks=(64, *data_shape),
                                                                 compression="lzf",      
             ) # this will autochunk and autocompress
                                         
@@ -403,9 +403,14 @@ class EventCamera(Camera):
         """
         # Write remaining data
         for key in self._write_dict.keys():
-            self.write_from_buffer(self._write_buffers[key], key)
+            if (len(self._write_buffers[key]) > 0):
+                self.write_from_buffer(self._write_buffers[key], key)
         print(f"Waiting for dataset writing to finish...")
-        while (self._writing_backend.is_done_writing()):
+        while (not self._writing_backend.is_done_writing()):
             pass
         print(f"Writing to {self._writing_dir} completed. :)")
+        for key in self._write_dict.keys():
+            self._write_dict[key].data = None
         self._dataset_file.close()
+        self._dataset_file = None
+        self._dataset_count += 1
