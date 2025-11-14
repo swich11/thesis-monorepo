@@ -4,16 +4,13 @@ import torch
 import torch.nn as nn
 import torchvision.transforms.functional as F
 
-import snntorch as snn
-from snntorch import surrogate
 
 from typing import List
+from ComponentInterface import ComponentInterface
+from utils import calculate_depth_loss
 
 
-from VelometryComponent import VelometryComponent
-
-
-class DepthMapNet(VelometryComponent):
+class DepthMapNet(ComponentInterface):
     def __init__(self):
         super().__init__()
 
@@ -43,24 +40,10 @@ class DepthMapNet(VelometryComponent):
         self.decoder_layers.reverse()
 
 
-    def backward(self, x_res: torch.Tensor, x_real: torch.Tensor) -> None:
-        x_real = self._crop(x_real, x_res)
-        assert(x_res.shape == x_real.shape)
-
-        # apply gaussian smoothing on the result to ensure it doesn't overfit
-        # we are not trying to get a 1 to 1 depth map here
-        # just a very good, averaged approximation
-        d_res_blur = F.gaussian_blur(x_res, [5, 5])
-        loss: torch.Tensor = torch.linalg.norm((d_res_blur - x_real), 2, dim=(2, 3))
-        # this doesn't really work for these purposes. We don't need a spicy depth map
-        loss.backward()
-
-
-
 # Testing
 if __name__ == "__main__":
     net = DepthMapNet()
     x = torch.randn(1, 2, 346, 260)
     y: torch.Tensor = net(x)
-    net.backward(y, torch.randn(1, 1, 346, 260))
+    calculate_depth_loss(y, torch.randn(1, 1, 346, 260)).backward()
 

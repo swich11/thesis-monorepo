@@ -4,89 +4,20 @@
 import torch
 import torch.nn as nn
 
-import snntorch as snn
-from snntorch import surrogate
 
-from typing import List, Tuple
+from typing import Tuple
+from VelometryComponent import VelometryComponent
+from DepthMapVelocityNet import DepthMapVelocityNet
+from OpticalFlowVelocityNet import OpticalFlowVelocityNet
+from utils import crop
 
 
-class VelocityNet(nn.Module):
-    def __init__(self, depth: int = 4):
+class VelocityNet(VelometryComponent):
+    def __init__(self):
         super().__init__()
-        self.depth = depth
-        input_channels = 2
-        output_channels = 64
-        spike_grad = surrogate.fast_sigmoid()
-
-        self.encoder_layers = [nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, 3),
-            snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=True),
-            nn.Conv2d(output_channels, output_channels, 3),
-            snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=True)
-        )]
-        for _ in range(depth):
-            input_channels = output_channels
-            output_channels = output_channels * 2
-            self.encoder_layers.append(nn.Sequential(
-                nn.MaxPool2d(2, 2),
-                # Add SNN layer here?
-                nn.Conv2d(input_channels, output_channels, 3),
-                snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=True),
-                nn.Conv2d(output_channels, output_channels, 3),
-                snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=True),
-            ))
-        # add the upconvolution to the last encoder layer
-        self.encoder_layers[-1].append(nn.ConvTranspose2d(output_channels, output_channels // 2, 2, 2))
-
-        input_channels_save = output_channels
-        self.optical_decoder_layers: List[nn.Sequential] = []
-        for _ in range(depth - 1):
-            input_channels = output_channels
-            output_channels = input_channels // 2
-            self.optical_decoder_layers.append(nn.Sequential(
-                nn.Conv2d(input_channels + 6, output_channels, 3), # add 6 for velocity input channels
-                nn.ReLU(),
-                nn.Conv2d(output_channels, output_channels, 3),
-                nn.ReLU(),
-                nn.ConvTranspose2d(output_channels, output_channels // 2, 2, 2)
-            ))
-        # Last layer set for optical flow output
-        input_channels = output_channels
-        output_channels = input_channels // 2
-        self.optical_decoder_layers.append(nn.Sequential(
-            nn.Conv2d(input_channels + 6, output_channels, 3), # add 6 for velocity input channels
-            nn.ReLU(),
-            nn.Conv2d(output_channels, output_channels, 3),
-            nn.ReLU(),
-            nn.Conv2d(output_channels, 2, 1) # 2 output channels for optical flow
-        ))
-        self.optical_decoder_layers.reverse()
-
-
-        self.depth_decoder_layers: List[nn.Sequential] = []
-        output_channels = input_channels_save
-        for _ in range(depth - 1):
-            input_channels = output_channels
-            output_channels = input_channels // 2
-            self.depth_decoder_layers.append(nn.Sequential(
-                nn.Conv2d(input_channels + 6, output_channels, 3), # add 6 for velocity input channels
-                nn.ReLU(),
-                nn.Conv2d(output_channels, output_channels, 3),
-                nn.ReLU(),
-                nn.ConvTranspose2d(output_channels, output_channels // 2, 2, 2)
-            ))
-        # Last layer set for depth map output
-        input_channels = output_channels
-        output_channels = input_channels // 2
-        self.depth_decoder_layers.append(nn.Sequential(
-            nn.Conv2d(input_channels + 6, output_channels, 3), # add 6 for velocity input channels
-            nn.ReLU(),
-            nn.Conv2d(output_channels, output_channels, 3),
-            nn.ReLU(),
-            nn.Conv2d(output_channels, 1, 1) # 1 output channel for depth
-        ))
-        self.depth_decoder_layers.reverse()
         
+        self.depth_net = DepthMapVelocityNet()
+        self.flow_net = OpticalFlowVelocityNet()
         # Velocity Layers
         self.velocity_layers = nn.Sequential(
             nn.Conv2d(3, 16, 5),
@@ -113,24 +44,14 @@ class VelocityNet(nn.Module):
         x = self.encoder_layers[n](x)
         if n == self.depth:
             return (x, x)
-
         d, o = self._forward_recurse_unet(x, v, n + 1)    
         # Crop the skip connection, assumes d and o have same shape
-        wd_x = (x.shape[2] - d.shape[2])
-        wd_y = (x.shape[3] - d.shape[3])
-        wd_xi = wd_x // 2
-        wd_yi = wd_y // 2
-        wd_xj = wd_xi + 1 if (wd_x % 2) else wd_xi
-        wd_yj = wd_yi + 1 if (wd_y % 2) else wd_yi
-
-        x = torch.cat([x[:, :, wd_xi:-wd_xj, wd_yi:-wd_yj]])
-
+        x = crop(x, d)
         v = v.unsqueeze(-1).unsqueeze(-1) # add 2 spatial dimensions
         v = v.expand(-1, -1, d.shape[2], d.shape[3])
 
-        d = self.depth_decoder_layers[n](torch.cat([x, d, v], dim=1))
-        o = self.optical_decoder_layers[n](torch.cat([x, o, v], dim=1))
-
+        d = self.depth_net.decoder_layers[n](torch.cat([x, d, v], dim=1))
+        o = self.flow_net.decoder_layers[n](torch.cat([x, o, v], dim=1))
         return (d, o)
 
 
@@ -140,7 +61,7 @@ class VelocityNet(nn.Module):
 
 # Testing works
 if __name__ == "__main__":
-    net = VelocityNet(4)
+    net = VelocityNet()
     x = torch.randn(1, 2, 346, 260)
     v = torch.randn(1, 6)
     v_out: torch.Tensor

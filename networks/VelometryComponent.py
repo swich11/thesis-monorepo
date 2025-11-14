@@ -51,42 +51,4 @@ class VelometryComponent(nn.Module, ABC):
             ))
         # add the upconvolution to the last encoder layer
         self.encoder_layers[-1].append(nn.ConvTranspose2d(self.output_channels, self.output_channels // 2, 2, 2))
-
-
-    def forward(self, x):
-        return self._forward_recurse(x, 0)
-
-
-    def _forward_recurse(self, x: torch.Tensor, n: int) -> torch.Tensor:
-        """
-            Recursive call to U-Net structure.
-        """
-        # Pass through encoder layer, -> output accumulator -> decoder layer
-        #                             -> next layer
-        x = self.encoder_layers[n](x)
-        if n == self.depth:
-            return x
-        y = self._forward_recurse(x, n + 1)
-        # crop for the skip connection here
-        x = self._crop(x, y)
-        x = self.decoder_layers[n](torch.cat([x, y], dim=1))
-        return x
-        
-
-    def _crop(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        wd_x = (x.shape[2] - y.shape[2])
-        wd_y = (x.shape[3] - y.shape[3])
-        wd_xi = wd_x // 2
-        wd_yi = wd_y // 2
-        wd_xj = wd_xi + 1 if (wd_x % 2) else wd_xi
-        wd_yj = wd_yi + 1 if (wd_y % 2) else wd_yi
-        return x[:, :, wd_xi:-wd_xj, wd_yi:-wd_yj]
     
-
-    @abstractmethod
-    def backward(self, x_res: torch.Tensor, x_real: torch.Tensor) -> None:
-        """
-            Call this after the forward pass to perform the backwards pass
-            to train the network.
-        """
-        pass
