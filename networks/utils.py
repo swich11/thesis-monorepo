@@ -20,11 +20,15 @@ def crop(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 def calculate_depth_loss(x_res: torch.Tensor, x_real: torch.Tensor) -> torch.Tensor:
     x_real = crop(x_real, x_res)
     
+    # sanatise the input to remove infinite depths
+    x_real = torch.where(torch.isinf(x_real), torch.full_like(x_real, 1000.0, device=x_real.device), x_real)
+    
     # apply gaussian smoothing on the result to ensure it doesn't overfit
     # we are not trying to get a 1 to 1 depth map here
     # just a very good, averaged approximation
     x_res_blur = F.gaussian_blur(x_res, [5, 5])
-    loss = torch.sum(torch.linalg.vector_norm((x_res_blur - x_real), 2, dim=1))
+    loss = torch.mean(torch.linalg.norm(x_res_blur - x_real, 2, dim=1))
+    # loss = torch.mean(torch.linalg.vector_norm((x_res_blur - x_real), 2, dim=1))
     return loss
 
 

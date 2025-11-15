@@ -1,6 +1,5 @@
 from abc import ABC
 
-
 import torch
 from VelometryComponent import VelometryComponent
 from utils import crop
