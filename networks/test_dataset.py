@@ -2,7 +2,7 @@ import h5py
 import numpy as np
 
 
-f = h5py.File('../datasets/dataset1.hdf5')
+f = h5py.File('../datasets/dataset0.hdf5')
 
 datasets = {}
 data_names = (

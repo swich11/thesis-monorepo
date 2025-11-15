@@ -388,7 +388,7 @@ class EventCamera(Camera):
         dset: h5py.Dataset = self._write_dict[key].data
         start = dset.shape[0]
         dset.resize((dset.shape[0] + length, *dset.shape[1:]))
-        stack = np.stack(buffer, axis=0)
+        stack = np.stack(buffer[:length], axis=0)
         if (len(stack.shape) == 1):
             stack = np.expand_dims(stack, axis=1)
         dset[start:] = stack
@@ -404,7 +404,7 @@ class EventCamera(Camera):
         for key in self._write_dict.keys():
             length = len(self._write_buffers[key])
             if (length > 0):
-                self.write_from_buffer(self._write_buffers[key], key), length
+                self.write_from_buffer(self._write_buffers[key], key, length)
         print(f"Waiting for dataset writing to finish...")
         while (not self._writing_backend.is_done_writing()):
             pass
