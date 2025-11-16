@@ -45,7 +45,7 @@ class OpticalFlowNet(ComponentInterface):
 if __name__ == "__main__":
     net = OpticalFlowNet()
     x = torch.randn(1, 2, 346, 260)
-    mems = net.init_mems(x)
+    mems = net.init_mems(x, torch.device("cpu"))
     y: torch.Tensor
-    y, mems = net(x, mems)
+    y, mems = net(x, mems[0])
     calculate_flow_loss(y, torch.randn(1, 2, 346, 260)).backward()
