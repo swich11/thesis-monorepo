@@ -24,9 +24,9 @@ class EncoderLayer(nn.Module):
     def forward(self, x, mem1, mem2):
         x = self.conv1(x)
         x, mem1 = self.leaky1(x, mem1)
-        x = self.conv2(x)
-        _, mem2 = self.leaky2(x, mem2)
-        return x, mem1, mem2
+        y = self.conv2(x)
+        x, mem2 = self.leaky2(y, mem2)
+        return x, y, mem1, mem2
 
 
 class VelometryComponent(nn.Module, ABC):
