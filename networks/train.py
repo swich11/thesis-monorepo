@@ -6,6 +6,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import matplotlib.pyplot as plt
+import random
 from torch.utils.data import DataLoader, Dataset
 from snntorch import utils
 
@@ -15,11 +17,16 @@ from DepthMapVelocityNet import DepthMapVelocityNet
 from OpticalFlowNet import OpticalFlowNet
 from OpticalFlowVelocityNet import OpticalFlowVelocityNet
 from VelocityNet import VelocityNet
+from VelometryComponent import VelometryComponent
 from utils import calculate_depth_loss, calculate_flow_loss, calculate_velocity_loss
 
 
 from enum import Enum
-from typing import List
+from typing import List, Callable
+
+
+# additional types
+LossFunction = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
 
 class DataName(Enum):
@@ -46,6 +53,16 @@ name_map = {
 }
 
 
+# Data map allows training code to be reused for each net
+data_map = {
+    DepthMapNet: ([DataName.DEPTH_MAP], calculate_depth_loss),
+    DepthMapVelocityNet: ([DataName.FRAME_VELOCITIES, DataName.DEPTH_MAP], calculate_depth_loss),
+    OpticalFlowNet: ([DataName.MOTION_FLOW], calculate_flow_loss),
+    OpticalFlowVelocityNet: ([DataName.FRAME_VELOCITIES, DataName.MOTION_FLOW], calculate_flow_loss),
+    VelocityNet: ([DataName.FRAME_VELOCITIES], calculate_velocity_loss),
+}
+
+
 class H5Dataset(Dataset):
     def __init__(self, dataset_path: str, keys: List[str]):
         self.file = None
@@ -66,59 +83,149 @@ class H5Dataset(Dataset):
             self.file = h5py.File(self.dataset_path)
         
         ret: List[torch.Tensor] = []
+        ret.append(torch.stack([
+                torch.Tensor(self.file[name_map[DataName.ON_EVENTS]][idx]),
+                torch.Tensor(self.file[name_map[DataName.OFF_EVENTS]][idx]),
+                ], 
+        dim = 0))
         for key in self.keys:
-            # Always include the on and off events together
-            ret.append(torch.stack([
-                    torch.Tensor(self.file[name_map[DataName.ON_EVENTS]][idx]),
-                    torch.Tensor(self.file[name_map[DataName.OFF_EVENTS]][idx]),
-                    ], 
-            dim = 0))
-            ret.append(torch.Tensor(self.file[key][idx]).unsqueeze(dim=0))
-
+            t = torch.Tensor(self.file[key][idx])
+            if (key == name_map[DataName.MOTION_FLOW]):
+                # motion flow outlier has 4 channels (only need the first 2) (x, y)
+                ret.append(t.permute(2, 0, 1)[:2])
+            else:
+                ret.append(t.unsqueeze(dim=0))
         return ret
+    
+
+class BalancedDataLoader:
+    def __init__(self, datasets: List[Dataset], batch_size: int, num_workers=4, drop_last=True):
+        self.batch_size = batch_size
+        self.data_loaders = [DataLoader(d, batch_size=batch_size, num_workers=num_workers, shuffle=True, drop_last=drop_last) for d in datasets]
+
+
+    def __len__(self):
+        return sum(len(loader) for loader in self.data_loaders)
+
+
+    def __iter__(self):
+        self.data_iterators = []
+        self.iterator_lengths = []
+        self.length = 0
+        for loader in self.data_loaders:
+            length = len(loader)
+            self.data_iterators.append(iter(loader))
+            self.iterator_lengths.append(length)
+            self.length += length
+        return self
+
+
+    def __next__(self):
+        if self.length == 0:
+            raise StopIteration
+        idx = random.choices(range(len(self.data_iterators)), self.iterator_lengths, k=1)[0] # get random weighted index
+        # increment iterator lengths
+        self.iterator_lengths[idx] -= 1
+        self.length -= 1
+        return next(self.data_iterators[idx])
+    
+
 
 
 def assert_wellformed(f: h5py.File) -> bool:
     assert all((f[name_map[key]].shape[0] == f[name_map[DataName.RENDER_TIME]].shape[0]) for key in name_map.keys())
         
 
-def train(dataset_path: str, net: nn.Module, epochs: int = 1):
+def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 1) -> List[float]:
     device = torch.device("cuda")
-    net.to(device)
-    data_loader = DataLoader(H5Dataset(dataset_path, ["Depths"]), batch_size=1, num_workers=4, shuffle=False)
-    optimizer = optim.Adam(net.parameters(), lr=5e-4)
-    utils.reset(net)
+    net = net.to(device)
+    data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
+    optimizer = optim.Adam(net.parameters(), lr=1e-3)
 
+
+    losses: List[float] = []
     for epoch in range(epochs):
-        train_batch: List[torch.Tensor] = iter(data_loader)
-        for events, targets in train_batch:
+        print(f"Training Epoch {epoch}.")
+        for events, targets in data_loader:
             events = events.to(device)
             targets = targets.to(device)
             net.train()
-            result = net(events)
-            loss = calculate_depth_loss(result, targets)
-            print(loss)
-            # actually do the step
+            # back propogate through time for the batch
+            utils.reset(net) # reset SNN memories at the start of the batch
+            mem_batches = net.init_mems(events, device)
+            loss = 0.0
+            for i in range(events.shape[0]):
+                result, mem_batches[i] = net(events[i].unsqueeze(0), mem_batches[i]) # pass one set of spikes in at a time
+                print(result)
+                loss += loss_fn(result, targets[i].unsqueeze(0))
+            loss = loss / events.shape[0]
+            # do backwards pass per batch loss
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             optimizer.step()
+            losses.append(float(loss.detach()))
+    return losses
 
 
-input_file_paths: List[str] = []
-# assume correct input
-for dataset in argv[1:]:
-    path = f'../datasets/{dataset}.hdf5'
-    f = h5py.File(path)
-    print(f"Loaded {dataset}.")
-    assert_wellformed(f)
-    f.close()
-    input_file_paths.append(path)
+def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 1) -> List[float]:
+    device = torch.device("cuda")
+    net = net.to(device)
+    data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
+    optimizer = optim.Adam(net.parameters(), lr=1e-3)
 
 
-# initialise models
-depthNet = DepthMapNet()
+    losses: List[float] = []
+    for epoch in range(epochs):
+        print(f"Training Epoch {epoch}.")
+        for events, velocities, targets in data_loader:
+            events = events.to(device)
+            targets = targets.to(device)
+            velocities = velocities.to(device)
+            net.train()
+            # back propogate through time for the batch
+            utils.reset(net) # reset SNN memories at the start of the batch
+            mem_batches = net.init_mems(events, device)
+            loss = 0.0
+            for i in range(1, events.shape[0]):
+                result, mem_batches[i] = net(events[i].unsqueeze(0), velocities[i-1], mem_batches[i]) # pass one set of spikes in at a time, and previous velocity estimate
+                print(result)
+                loss += loss_fn(result, targets[i].unsqueeze(0))
+            loss = loss / events.shape[0]
+            # do backwards pass per batch loss
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+            optimizer.step()
+            losses.append(float(loss.detach()))
+    return losses
 
 
-for path in input_file_paths:
-    train(path, depthNet)
+def train_velometry_component(input_file_paths: List[str], net: VelometryComponent, epochs: int  = 1) -> List[float]:
+    data_names = [name_map[dataName] for dataName in data_map[type(net)][0]]
+    datasets: List[Dataset] = [H5Dataset(path, data_names) for path in input_file_paths]
+    if len(data_map[type(net)][0]) > 1:
+        print("velocity training")
+        losses = train_velocity(datasets, net, data_map[type(net)][1], epochs=epochs)
+    else:
+        losses = train(datasets, net, data_map[type(net)][1], epochs=epochs)
+    return losses
+
+
+if __name__ == "__main__":
+    input_file_paths: List[str] = []
+    # assume correct input
+    for dataset in argv[1:]:
+        path = f'../datasets/{dataset}.hdf5'
+        f = h5py.File(path)
+        print(f"Loaded {dataset}.")
+        assert_wellformed(f)
+        f.close()
+        input_file_paths.append(path)
+    loss_vel = train_velometry_component(input_file_paths, OpticalFlowVelocityNet(), epochs=1)
+    # loss_norm = train_velometry_component(input_file_paths, OpticalFlowNet())
+
+    plt.plot(loss_vel, label='velocity net', color='orange')
+   #  plt.plot(loss_norm, label='normal net', color='blue')
+    plt.show()
 

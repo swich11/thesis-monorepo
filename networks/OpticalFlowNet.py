@@ -2,12 +2,12 @@
 
 import torch
 import torch.nn as nn
-import torchvision.transforms.functional as F
 
 
 from typing import List
 from ComponentInterface import ComponentInterface
 from utils import calculate_flow_loss
+from OpticalFlowVelocityNet import OpticalFlowVelocityNet
 
 
 class OpticalFlowNet(ComponentInterface):
@@ -38,11 +38,14 @@ class OpticalFlowNet(ComponentInterface):
             nn.Conv2d(output_channels, 2, 1) # 2 output channels for optical flow
         ))
         self.decoder_layers.reverse()
+        self.decoder_layers = nn.ModuleList(self.decoder_layers)
 
 
 # Testing works
 if __name__ == "__main__":
     net = OpticalFlowNet()
     x = torch.randn(1, 2, 346, 260)
-    y: torch.Tensor = net(x)
+    mems = net.init_mems(x)
+    y: torch.Tensor
+    y, mems = net(x, mems)
     calculate_flow_loss(y, torch.randn(1, 2, 346, 260)).backward()

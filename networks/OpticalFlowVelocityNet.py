@@ -41,12 +41,14 @@ class OpticalFlowVelocityNet(VelocityComponentInterface):
             nn.Conv2d(output_channels, 2, 1) # 2 output channels for optical flow
         ))
         self.decoder_layers.reverse()
+        self.decoder_layers = nn.ModuleList(self.decoder_layers)
 
 
 # Testing works
 if __name__ == "__main__":
-    net = OpticalFlowVelocityNet()
-    x = torch.randn(1, 2, 346, 260)
-    v = torch.randn(1, 6)
+    device = torch.device("cuda")
+    net = OpticalFlowVelocityNet().to(device)
+    x = torch.randn(1, 2, 346, 260).to(device)
+    v = torch.randn(1, 6).to(device)
     y: torch.Tensor = net(x, v)
-    calculate_flow_loss(y, torch.randn(1, 2, 346, 260)).backward()
+    calculate_flow_loss(y, torch.randn(1, 2, 346, 260).to(device)).backward()
