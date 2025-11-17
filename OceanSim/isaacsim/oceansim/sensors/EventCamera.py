@@ -135,6 +135,7 @@ class EventCamera(Camera):
         # Add event annotators here
         self._annot_dict = {
             "HdrColor": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device))])),
+            "LdrColor": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('LdrColor', device=str(self._device))])),
             "Depths": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device))])),
             "Dists": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('distance_to_camera', device=str(self._device))])),
             "MotionFlow":  TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device))])),
@@ -166,6 +167,7 @@ class EventCamera(Camera):
                 "IMUTime": TuplePair((np.float32, (1,))),
                 "IMULinearAcceleration": TuplePair((np.float32, (3,))),
                 "IMUAngularVelocity": TuplePair((np.float32, (3,))),
+                "GrayscaleImage": TuplePair((np.float32, (self._resolution[1], self._resolution[0]))), # GreyScale G
             }
             self._write_buffers = {
                 "OnEvents": [],
@@ -177,6 +179,7 @@ class EventCamera(Camera):
                 "IMUTime": [],
                 "IMULinearAcceleration": [],
                 "IMUAngularVelocity": [],
+                "GrayscaleImage": [],
             }
 
 
@@ -200,7 +203,7 @@ class EventCamera(Camera):
         """
         for key in self._annot_dict.keys():
             self._annot_dict[key].data = self._annot_dict[key][0].get_data()
-        # ldr = self._rgb_annotator.get_data() # from the Camera class
+        ldr_curr: wp.array = self._annot_dict["LdrColor"].data
         hdr_curr: wp.array = self._annot_dict["HdrColor"].data
         depths: wp.array = self._annot_dict["Dists"].data # distance to camera for water attenuation
         frame_time: float = self._current_frame["rendering_time"] # simulator time for the frame
@@ -212,6 +215,7 @@ class EventCamera(Camera):
         if hdr_curr.size != 0:
             on_events, off_events = self._renderer.calculate_events(hdr_curr, depths)
             event_frame = self._renderer.render(on_events, off_events)
+            grayscale_image = np.sum(ldr_curr.numpy()[:, :, :-1], axis=2) / 3.0 # get the grayscale image quickly
             if self._viewport:
                 # convert depth map values to grayscale image in rgba format
                 # probably run these async
@@ -238,6 +242,7 @@ class EventCamera(Camera):
                     "OffEvents": off_events.numpy(),
                     "Depths": self._annot_dict["Depths"].data.numpy(),
                     "MotionFlow": self._annot_dict["MotionFlow"].data.numpy(),
+                    "GrayscaleImage": grayscale_image,
                 }
                 self._writing_backend.schedule(self.write_data, data_dict)
                 
