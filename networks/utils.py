@@ -99,7 +99,12 @@ def calculate_AAE(x_res: torch.Tensor, x_real: torch.Tensor, event1: torch.Tenso
     return torch.mean(torch.abs(x_real[:, :, event_mask] - x_res[:, :, event_mask]))
 
 
-
+def calculate_AAE_simple(x_res: torch.Tensor, x_real: torch.Tensor) -> torch.Tensor:
+    """
+        Simple form of AAE for early training.
+    """
+    x_real = crop(x_real, x_res)
+    return torch.mean(torch.abs(x_real - x_res))
 
 
 def calculate_velocity_loss(x_res: torch.Tensor, x_real: torch.Tensor) -> torch.Tensor:

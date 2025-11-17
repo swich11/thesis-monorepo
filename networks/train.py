@@ -18,7 +18,7 @@ from OpticalFlowNet import OpticalFlowNet
 from OpticalFlowVelocityNet import OpticalFlowVelocityNet
 from VelocityNet import VelocityNet
 from VelometryComponent import VelometryComponent
-from utils import calculate_depth_loss, calculate_flow_loss, calculate_velocity_loss, calculate_AAE
+from utils import calculate_depth_loss, calculate_flow_loss, calculate_velocity_loss, calculate_AAE, calculate_AAE_simple
 
 
 from enum import Enum
@@ -39,6 +39,7 @@ class DataName(Enum):
     OFF_EVENTS = 6,
     DEPTH_MAP = 7,
     MOTION_FLOW = 8,
+    GRAYSCALE = 9,
 
 name_map = {
     DataName.RENDER_TIME: "RenderTime",
@@ -50,6 +51,7 @@ name_map = {
     DataName.OFF_EVENTS: "OffEvents",
     DataName.DEPTH_MAP: "Depths",
     DataName.MOTION_FLOW: "MotionFlow",
+    DataName.GRAYSCALE: "GrayscaleImage",
 }
 
 
@@ -136,9 +138,57 @@ def assert_wellformed(f: h5py.File) -> bool:
     assert all((f[name_map[key]].shape[0] == f[name_map[DataName.RENDER_TIME]].shape[0]) for key in name_map.keys())
         
 
+def train_from_image(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int = 16, epochs: int = 5) -> Tuple[List[float], List[float]]:
+    device = torch.device("cuda")
+    data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
+    optimizer = optim.Adam(net.parameters(), lr=1e-3)
+
+
+    losses: List[float] = []
+    AAE: List[float] = []
+    for epoch in range(epochs):
+        print(f"Training Epoch {epoch}.")
+        epoch_loss = 0.0
+        for events, images, targets in data_loader:
+            images: torch.Tensor = images.to(device)
+            images = torch.stack((images, images), dim=1) / torch.max(images) # normalise to an event input
+            targets: torch.Tensor = targets.to(device)
+            net.train()
+            # back propogate through time for the batch
+            utils.reset(net) # reset SNN memories at the start of the batch
+            mem_batches = net.init_mems(events, device)
+            batch_loss = 0.0
+            for i in range(1, events.shape[0]):
+                result, mem_batches[i] = net(events[i].unsqueeze(0), mem_batches[i - 1]) # pass one set of spikes in at a time
+                # use the same flow loss as before (it should work)
+                loss = loss_fn(result, targets[i].unsqueeze(0), images[i-1].unsqueeze(0), images[i].unsqueeze(0))
+                AAE.append(float(calculate_AAE_simple(result, targets[i].unsqueeze(0)).detach()))
+                batch_loss += loss
+            # do backwards pass per batch loss
+            optimizer.zero_grad()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+            batch_loss.backward()
+            optimizer.step()
+            batch_loss = batch_loss / events.shape[0]
+            losses.append(float(batch_loss.detach()))
+            epoch_loss += float(batch_loss.detach())
+        # print the weights per epoch
+        for name, p in net.named_parameters():
+            if p.grad is not None:
+                print(name, p.grad.norm())
+        print(f"Loss: {epoch_loss}")
+        torch.save({
+            "model": net.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "epoch": epoch,
+            "loss": epoch_loss,
+        }, f"checkpoint{epoch}.pth")
+
+    return losses, AAE
+
+
 def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 5) -> Tuple[List[float], List[float]]:
     device = torch.device("cuda")
-    net = net.to(device)
     data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
     optimizer = optim.Adam(net.parameters(), lr=1e-3)
 
@@ -172,7 +222,6 @@ def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, bat
 
 def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 1) -> List[float]:
     device = torch.device("cuda")
-    net = net.to(device)
     data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
     optimizer = optim.Adam(net.parameters(), lr=1e-3)
 
@@ -224,7 +273,10 @@ if __name__ == "__main__":
         assert_wellformed(f)
         f.close()
         input_file_paths.append(path)
-    loss, AAE = train_velometry_component(input_file_paths, OpticalFlowNet(), epochs=5)
+    net = OpticalFlowNet()
+    net = net.to(torch.device("cuda"))
+    loss, AAE = train_velometry_component(input_file_paths, net, epochs=1)
+    
     # loss_norm = train_velometry_component(input_file_paths, OpticalFlowNet())
 
     plt.plot(loss, label='velocity net', color='orange')
