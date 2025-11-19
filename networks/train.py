@@ -99,7 +99,7 @@ class H5Dataset(Dataset):
             else:
                 ret.append(t.unsqueeze(dim=0))
         return ret
-    
+
 
 class BalancedDataLoader:
     def __init__(self, datasets: List[Dataset], batch_size: int, num_workers=4, drop_last=True):
@@ -141,8 +141,9 @@ def assert_wellformed(f: h5py.File) -> bool:
 
 def train_from_image(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int = 16, epochs: int = 5) -> Tuple[List[float], List[float]]:
     device = torch.device("cuda")
+    net = net.to(device)
     data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
-    optimizer = optim.Adam(net.parameters(), lr=1e-3)
+    optimizer = optim.Adam(net.parameters(), lr=5e-4)
 
 
     losses: List[float] = []
@@ -150,8 +151,9 @@ def train_from_image(datasets: Dataset, net: VelometryComponent, loss_fn: LossFu
     for epoch in range(epochs):
         print(f"Training Epoch {epoch}.")
         epoch_loss = 0.0
-        for events, images, targets in data_loader:
+        for events, targets, images in data_loader:
             images: torch.Tensor = images.to(device)
+            images = images.squeeze(dim=1)
             images = torch.stack((images, images), dim=1) / torch.max(images) # normalise to an event input
             targets: torch.Tensor = targets.to(device)
             net.train()
@@ -160,7 +162,7 @@ def train_from_image(datasets: Dataset, net: VelometryComponent, loss_fn: LossFu
             mem_batches = net.init_mems(events, device)
             batch_loss = 0.0
             for i in range(1, events.shape[0]):
-                result, mem_batches[i] = net(events[i].unsqueeze(0), mem_batches[i - 1]) # pass one set of spikes in at a time
+                result, mem_batches[i] = net(images[i-1].unsqueeze(0), mem_batches[i - 1]) # pass one set of spikes in at a time
                 # use the same flow loss as before (it should work)
                 loss = loss_fn(result, targets[i].unsqueeze(0), images[i-1].unsqueeze(0), images[i].unsqueeze(0))
                 AAE.append(float(calculate_AAE_simple(result, targets[i].unsqueeze(0)).detach()))
@@ -183,7 +185,7 @@ def train_from_image(datasets: Dataset, net: VelometryComponent, loss_fn: LossFu
             "optimizer": optimizer.state_dict(),
             "epoch": epoch,
             "loss": epoch_loss,
-        }, f"checkpoint{epoch}.pth")
+        }, f"models/checkpoint{epoch}.pth")
 
     return losses, AAE
 
@@ -266,13 +268,13 @@ def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunc
 
 
 def train_velometry_component(input_file_paths: List[str], net: VelometryComponent, epochs: int  = 1) -> Tuple[List[float], List[float]]:
-    data_names = [name_map[dataName] for dataName in data_map[type(net)][0]]
+    data_names = [name_map[dataName] for dataName in data_map[type(net)][0]] + [name_map[DataName.GRAYSCALE]]
     datasets: List[Dataset] = [H5Dataset(path, data_names) for path in input_file_paths]
     if len(data_map[type(net)][0]) > 1:
         print("velocity training")
         losses, AAE = train_velocity(datasets, net, data_map[type(net)][1], epochs=epochs)
     else:
-        losses, AAE = train(datasets, net, data_map[type(net)][1], epochs=epochs)
+        losses, AAE = train_from_image(datasets, net, data_map[type(net)][1], epochs=epochs)
     return losses, AAE
 
 
@@ -286,17 +288,16 @@ if __name__ == "__main__":
         assert_wellformed(f)
         f.close()
         input_file_paths.append(path)
-    net = OpticalFlowNet()
-    net = net.to(torch.device("cuda"))
-    loss, AAE = train_velometry_component(input_file_paths, net, epochs=1)
+
+    loss, AAE = train_velometry_component(input_file_paths, OpticalFlowNet(), epochs=5)
     
     # loss_norm = train_velometry_component(input_file_paths, OpticalFlowNet())
 
-    plt.plot(loss_vel, label='velocity net', color='orange')
+    plt.plot(loss, label='velocity net', color='orange')
     # plt.plot(loss_norm, label='normal net', color='blue')
     plt.show()
 
-    plt.plot(aae_vel, color='orange')
+    plt.plot(AAE, color='orange')
     # plt.plot(aae_norm, color='blue')
     plt.show()
 

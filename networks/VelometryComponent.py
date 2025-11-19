@@ -16,9 +16,9 @@ class EncoderLayer(nn.Module):
         super().__init__()
         spike_grad = surrogate.fast_sigmoid()
         self.conv1 = nn.Conv2d(input_channels, output_channels, 3)
-        self.leaky1 = snn.Leaky(0.85, spike_grad=spike_grad, init_hidden=False)
+        self.leaky1 = snn.Leaky(0.5, learn_beta=True, learn_threshold=True, spike_grad=spike_grad, init_hidden=False)
         self.conv2 = nn.Conv2d(output_channels, output_channels, 3)
-        self.leaky2 = snn.Leaky(0.85, spike_grad=spike_grad, init_hidden=False)
+        self.leaky2 = snn.Leaky(0.5, learn_beta=True, learn_threshold=True, spike_grad=spike_grad, init_hidden=False)
 
 
     def forward(self, x, mem1, mem2):

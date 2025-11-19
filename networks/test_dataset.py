@@ -16,11 +16,15 @@ data_names = (
     "OffEvents",
     "Depths",
     "MotionFlow",
+    "GrayscaleImage",
 )
 
 for name in data_names:
     datasets[name] = f[name]
     print(f"Loaded {name} with shape {datasets[name].shape}")
+
+
+print(datasets["GrayscaleImage"][0])
 
 
 

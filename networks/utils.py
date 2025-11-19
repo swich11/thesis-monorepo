@@ -62,7 +62,7 @@ def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
     normalized_flow[:, 0, :, :] = x_res[:, 0, :, :] / ((W - 1) / 2.0)
     normalized_flow[:, 1, :, :] = x_res[:, 1, :, :] / ((H - 1) / 2.0)
     grid = grid + normalized_flow.permute(0, 2, 3, 1)
-    warped_event2 = F.grid_sample(
+    warped_event1 = F.grid_sample(
         event2,
         grid,
         mode='bilinear',
@@ -71,7 +71,7 @@ def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
     )
 
     charbonnier = lambda x: (x**2 + mu**2)**r
-    l_photo = charbonnier((event1 - warped_event2) * event_mask)
+    l_photo = charbonnier((event2 - warped_event1) * event_mask)
     l_photo = l_photo.sum() / (event_mask.sum() + 1e-6)
 
 
