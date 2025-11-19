@@ -27,7 +27,7 @@ class ComponentInterface(VelometryComponent, ABC):
             x = self.max_pool(x) # pass x through max pooling
         x, z, mems[0], mems[1] = self.encoder_layers[n](x, mems[0], mems[1])
         if n == self.depth:
-            x = self.encoder_layers[n + 1](mems[1]) # do the first upconvolution
+            x = self.encoder_layers[n + 1](x) # do the first upconvolution
             return x, mems
         y, mems[2:] = self._forward_recurse(x, mems[2:], n + 1)
         # crop for the skip connection here

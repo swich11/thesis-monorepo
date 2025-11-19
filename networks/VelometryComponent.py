@@ -16,9 +16,9 @@ class EncoderLayer(nn.Module):
         super().__init__()
         spike_grad = surrogate.fast_sigmoid()
         self.conv1 = nn.Conv2d(input_channels, output_channels, 3)
-        self.leaky1 = snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=False)
+        self.leaky1 = snn.Leaky(0.85, spike_grad=spike_grad, init_hidden=False)
         self.conv2 = nn.Conv2d(output_channels, output_channels, 3)
-        self.leaky2 = snn.Leaky(0.5, spike_grad=spike_grad, learn_beta=True, init_hidden=False)
+        self.leaky2 = snn.Leaky(0.85, spike_grad=spike_grad, init_hidden=False)
 
 
     def forward(self, x, mem1, mem2):
@@ -45,6 +45,7 @@ class VelometryComponent(nn.Module, ABC):
         self.output_channels = 1024
         self.input_channels = 512
         self.depth = 4
+        self.max_pool = nn.MaxPool2d(2, 2)
         
     
 
@@ -57,7 +58,6 @@ class VelometryComponent(nn.Module, ABC):
         self.input_channels = 2
         self.output_channels = 64
 
-        self.max_pool = nn.MaxPool2d(2, 2)
         self.encoder_layers = [EncoderLayer(self.input_channels, self.output_channels)]
 
         for _ in range(self.depth):

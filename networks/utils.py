@@ -14,28 +14,22 @@ def crop(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     wd_xj = wd_xi + 1 if (wd_x % 2) else wd_xi
     wd_yj = wd_yi + 1 if (wd_y % 2) else wd_yi
     x = x[:, :, wd_xi:-wd_xj, wd_yi:-wd_yj]
-    assert(x.shape == y.shape)
+    assert(x.shape[2:] == y.shape[2:])
     return x
 
 
-def calculate_depth_loss(x_res: torch.Tensor, x_real: torch.Tensor) -> torch.Tensor:
+def calculate_depth_loss(x_res: torch.Tensor, x_real: torch.Tensor,
+                         event1: torch.Tensor, event2: torch.Tensor) -> torch.Tensor:
     x_real = crop(x_real, x_res)
-    
-    # sanatise the input to remove infinite depths
-    # x_real = torch.where(torch.isinf(x_real), torch.full_like(x_real, -1.0, device=x_real.device), x_real)
-    
     mask = ~torch.isinf(x_real)
 
-    # apply gaussian smoothing on the result to ensure it doesn't overfit
-    # we are not trying to get a 1 to 1 depth map here
-    # just a very good, averaged approximation
-    # x_res_blur = F.gaussian_blur(x_res, [5, 5])
-    # d = torch.log(x_res[mask]) - torch.log(x_real[mask])
-    # loss = torch.mean(d**2) - 0.5*torch.mean(d)**2
-    loss = torch.mean(torch.abs(x_res[mask] - x_real[mask]))
-    # loss = torch.mean((x_res_blur - x_real)**2)
-    # loss = torch.mean(torch.linalg.vector_norm((x_res_blur - x_real), 2, dim=1))
-    return loss
+    residuals = x_real[mask] - x_res[mask]
+    l_scale_invariant = torch.mean(residuals**2 - 1/(torch.sum(mask)**2) * (torch.sum(residuals)**2))
+    
+
+
+
+    return l_scale_invariant
 
 
 def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
@@ -51,7 +45,7 @@ def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
 
 
     # photometric loss on smoothed events
-    r = 0.45
+    r = 0.5
     mu = 1e-3
     H = event1.shape[2]
     W = event1.shape[3]
@@ -64,6 +58,7 @@ def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
     grid = torch.stack((x, y), dim=2)
     grid = grid.unsqueeze(0)
     normalized_flow = torch.zeros_like(x_res)
+    # Add time to the flow
     normalized_flow[:, 0, :, :] = x_res[:, 0, :, :] / ((W - 1) / 2.0)
     normalized_flow[:, 1, :, :] = x_res[:, 1, :, :] / ((H - 1) / 2.0)
     grid = grid + normalized_flow.permute(0, 2, 3, 1)
@@ -72,31 +67,31 @@ def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
         grid,
         mode='bilinear',
         padding_mode='border',
-        align_corners=True
+        align_corners=False
     )
 
     charbonnier = lambda x: (x**2 + mu**2)**r
-    l_photo = charbonnier(event1 - warped_event2) * event_mask
+    l_photo = charbonnier((event1 - warped_event2) * event_mask)
     l_photo = l_photo.sum() / (event_mask.sum() + 1e-6)
-    # l_event = torch.abs(x_res[:, :, event_mask] - x_real[:, :, event_mask]).mean() # L1 loss where spikes occur
-    # l_event = torch.mean(torch.abs(x_real[:, :, event_mask] - x_res[:, :, event_mask]))
 
-    # dx = torch.abs(x_res[:, :, :, 1:] - x_res[:, :, :, :-1])
-    # dy = torch.abs(x_res[:, :, 1:, :] - x_res[:, :, :-1, :])
-    # l_smooth = (dx.mean() + dy.mean())
+
+    dx = charbonnier(x_res[:, :, :, 1:] - x_res[:, :, :, :-1])
+    dy = charbonnier(x_res[:, :, 1:, :] - x_res[:, :, :-1, :])
+    l_smooth = (dx.mean() + dy.mean())
 
     mask = x_real != -1.0
     l_reg = 1e-4 * x_res[mask].abs().mean()
-    # print(l_smooth)
-    return l_photo + l_reg
+    # print(f"photometric: {l_photo}")
+    # print(f"smooth: {l_smooth}")
+    return l_photo + l_reg + 50*l_smooth
 
 
 def calculate_AAE(x_res: torch.Tensor, x_real: torch.Tensor, event1: torch.Tensor, event2: torch.Tensor) -> torch.Tensor:
     event1 = crop(event1, x_res)
     event2 = crop(event2, x_res)
     x_real = crop(x_real, x_res)
-    event_mask = ((event1 + event2).sum(dim=1).squeeze(dim=0) > 0.0)
-    return torch.mean(torch.abs(x_real[:, :, event_mask] - x_res[:, :, event_mask]))
+    events = IF.gaussian_blur((event1 + event2), [5, 5]).sum(dim=1).unsqueeze(0)
+    return torch.mean(torch.abs((x_real - x_res) * events))
 
 
 def calculate_AAE_simple(x_res: torch.Tensor, x_real: torch.Tensor) -> torch.Tensor:

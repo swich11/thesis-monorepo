@@ -25,16 +25,16 @@ class VelocityComponentInterface(VelometryComponent, ABC):
         #                             -> next layer
         if n > 0:
             x = self.max_pool(x)
-        x, mems[0], mems[1] = self.encoder_layers[n](x, mems[0], mems[1])
+        x, z, mems[0], mems[1] = self.encoder_layers[n](x, mems[0], mems[1])
         if n == self.depth:
-            x = self.encoder_layers[n + 1](mems[1]) # do the first upconvolution
+            x = self.encoder_layers[n + 1](x) # do the first upconvolution
             return x, mems
         y, mems[2:] = self._forward_recurse(x, v, mems[2:], n + 1)
         # Crop the skip connection
-        mem2 = crop(mems[1], y)
+        z = crop(z, y)
         v = v.unsqueeze(-1).unsqueeze(-1) # add 2 spatial dimensions
-        v = v.expand(-1, -1, mem2.shape[2], mem2.shape[3]) # match height and width
+        v = v.expand(-1, -1, z.shape[2], z.shape[3]) # match height and width
         
         # concatenate on input channels, combining image and velocity
-        x = self.decoder_layers[n](torch.cat([mem2, y, v], dim=1))
+        x = self.decoder_layers[n](torch.cat([z, y, v], dim=1))
         return (x, mems)

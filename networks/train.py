@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import random
 from torch.utils.data import DataLoader, Dataset
 from snntorch import utils
+import torchvision.transforms.functional as IF
 
 
 from DepthMapNet import DepthMapNet
@@ -197,36 +198,44 @@ def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, bat
     AAE: List[float] = []
     for epoch in range(epochs):
         print(f"Training Epoch {epoch}.")
+        epoch_loss = 0.0
         for events, targets in data_loader:
             events = events.to(device)
             targets = targets.to(device)
+            events = IF.gaussian_blur(events, [5, 5]) # get the damn network moving
             net.train()
             # back propogate through time for the batch
             utils.reset(net) # reset SNN memories at the start of the batch
             mem_batches = net.init_mems(events, device)
             batch_loss = 0.0
             for i in range(1, events.shape[0]):
-                result, mem_batches[i] = net(events[i].unsqueeze(0), mem_batches[i]) # pass one set of spikes in at a time
+                result, mem_batches[i] = net(events[i].unsqueeze(0), mem_batches[i-1]) # pass one set of spikes in at a time
                 loss = loss_fn(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0))
                 AAE.append(float(calculate_AAE(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0)).detach()))
-                batch_loss += loss
+                batch_loss = batch_loss + loss
             # do backwards pass per batch loss
             optimizer.zero_grad()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             batch_loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             optimizer.step()
             batch_loss = batch_loss / events.shape[0]
             losses.append(float(batch_loss.detach()))
+            epoch_loss += float(batch_loss.detach())
+        for name, p in net.named_parameters():
+            if p.grad is not None:
+                print(name, p.grad.norm())
+        print(epoch_loss)
     return losses, AAE
 
 
-def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 1) -> List[float]:
+def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 1) -> Tuple[List[float], List[float]]:
     device = torch.device("cuda")
     data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
-    optimizer = optim.Adam(net.parameters(), lr=1e-3)
+    optimizer = optim.Adam(net.parameters(), lr=1e-4)
 
 
     losses: List[float] = []
+    AAE: List[float] = []
     for epoch in range(epochs):
         print(f"Training Epoch {epoch}.")
         for events, velocities, targets in data_loader:
@@ -239,17 +248,21 @@ def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunc
             mem_batches = net.init_mems(events, device)
             loss = 0.0
             for i in range(1, events.shape[0]):
-                result, mem_batches[i] = net(events[i].unsqueeze(0), velocities[i-1], mem_batches[i]) # pass one set of spikes in at a time, and previous velocity estimate
-                print(result)
-                loss += loss_fn(result, targets[i].unsqueeze(0))
-            loss = loss / events.shape[0]
+                result, mem_batches[i] = net(events[i].unsqueeze(0), velocities[i-1], mem_batches[i-1]) # pass one set of spikes in at a time, and previous velocity estimate
+                loss += loss_fn(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0))
+                AAE.append(float(calculate_AAE(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0)).detach()))
             # do backwards pass per batch loss
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+            total_norm = 0
+            for name, p in net.named_parameters():
+                if p.grad is not None:
+                    print(f"{name}, {p.grad.norm()}")
+            # torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             optimizer.step()
+            loss = loss / events.shape[0]
             losses.append(float(loss.detach()))
-    return losses
+    return losses, AAE
 
 
 def train_velometry_component(input_file_paths: List[str], net: VelometryComponent, epochs: int  = 1) -> Tuple[List[float], List[float]]:
@@ -279,10 +292,11 @@ if __name__ == "__main__":
     
     # loss_norm = train_velometry_component(input_file_paths, OpticalFlowNet())
 
-    plt.plot(loss, label='velocity net', color='orange')
-   #  plt.plot(loss_norm, label='normal net', color='blue')
+    plt.plot(loss_vel, label='velocity net', color='orange')
+    # plt.plot(loss_norm, label='normal net', color='blue')
     plt.show()
 
-    plt.plot(AAE)
+    plt.plot(aae_vel, color='orange')
+    # plt.plot(aae_norm, color='blue')
     plt.show()
 

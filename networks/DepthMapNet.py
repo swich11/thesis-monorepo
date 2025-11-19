@@ -49,11 +49,11 @@ if __name__ == "__main__":
     with torch.autograd.detect_anomaly():
         net = DepthMapNet()
         x = torch.randn(1, 2, 346, 260)
-        y: torch.Tensor = net(x)
+        mems = net.init_mems(x, x.device)
+        y, mems[0] = net(x, mems[0])
         print(y)
-        calculate_depth_loss(y, torch.randn(1, 1, 346, 260)).backward()
+        torch.mean(y).backward()
         x = torch.randn(1, 2, 346, 260)
-        y: torch.Tensor = net(x)
+        y, mems[0] = net(x, mems[0])
         print(y)
-        calculate_depth_loss(y, torch.randn(1, 1, 346, 260)).backward()
 
