@@ -25,12 +25,13 @@ class ComponentInterface(VelometryComponent, ABC):
         #                             -> next layer
         if n > 0:
             x = self.max_pool(x) # pass x through max pooling
-        x, z, mems[0], mems[1] = self.encoder_layers[n](x, mems[0], mems[1])
         if n == self.depth:
-            x = self.encoder_layers[n + 1](x) # do the first upconvolution
+            x = self.residual_layer(x)
             return x, mems
+        else:
+           x, mems[0], mems[1] = self.encoder_layers[n](x, mems[0], mems[1])
         y, mems[2:] = self._forward_recurse(x, mems[2:], n + 1)
         # crop for the skip connection here
-        z = crop(z, y) # skip connection comes from conv layer
-        x = self.decoder_layers[n](torch.cat([z, y], dim=1))
+        x = crop(x, y) # skip connection comes from conv layer
+        x = self.decoder_layers[n](torch.cat([x, y], dim=1))
         return (x, mems)

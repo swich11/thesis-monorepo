@@ -39,10 +39,9 @@ def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
     event2 = crop(event2, x_res)
 
     # blurring helps avoid sparsity error
+    event1 = IF.gaussian_blur(event1, [3, 3])
+    event2 = IF.gaussian_blur(event2, [3, 3])
     event_mask = ((event1 + event2).sum(dim=1).squeeze(dim=0) > 0.0)
-    # event1 = IF.gaussian_blur(event1, [3, 3])
-    # event2 = IF.gaussian_blur(event2, [3, 3])
-
 
     # photometric loss on smoothed events
     r = 0.5
@@ -71,8 +70,7 @@ def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
     )
 
     charbonnier = lambda x: (x**2 + mu**2)**r
-    l_photo = charbonnier((event2 - warped_event1) * event_mask)
-    l_photo = l_photo.sum() / (event_mask.sum() + 1e-6)
+    l_photo = torch.sum(charbonnier(event2 - warped_event1)) / (torch.sum(event_mask) + 1)
 
 
     dx = charbonnier(x_res[:, :, :, 1:] - x_res[:, :, :, :-1])
@@ -81,17 +79,18 @@ def calculate_flow_loss(x_res: torch.Tensor, x_real: torch.Tensor,
 
     mask = x_real != -1.0
     l_reg = 1e-4 * x_res[mask].abs().mean()
-    # print(f"photometric: {l_photo}")
-    # print(f"smooth: {l_smooth}")
-    return l_photo + l_reg + 50*l_smooth
+
+    return 100000*l_photo + l_smooth
 
 
 def calculate_AAE(x_res: torch.Tensor, x_real: torch.Tensor, event1: torch.Tensor, event2: torch.Tensor) -> torch.Tensor:
     event1 = crop(event1, x_res)
     event2 = crop(event2, x_res)
     x_real = crop(x_real, x_res)
-    events = IF.gaussian_blur((event1 + event2), [5, 5]).sum(dim=1).unsqueeze(0)
-    return torch.mean(torch.abs((x_real - x_res) * events))
+    # print(x_real, x_res)
+    # events = IF.gaussian_blur((event1 + event2), [5, 5]).sum(dim=1).unsqueeze(0)
+    aae = torch.mean(torch.abs((x_real - x_res)))
+    return aae
 
 
 def calculate_AAE_simple(x_res: torch.Tensor, x_real: torch.Tensor) -> torch.Tensor:
@@ -104,4 +103,4 @@ def calculate_AAE_simple(x_res: torch.Tensor, x_real: torch.Tensor) -> torch.Ten
 
 def calculate_velocity_loss(x_res: torch.Tensor, x_real: torch.Tensor) -> torch.Tensor:
     # Vector norm for 6-DOF input
-    return torch.linalg.vector_norm((x_res - x_real))
+    return torch.mean((x_res - x_real)**2)

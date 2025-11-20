@@ -47,12 +47,12 @@ name_map = {
     DataName.PHYSICS_TIME: "IMUTime",
     DataName.IMU_LIN_ACC: "IMULinearAcceleration",
     DataName.IMU_ANG_VEL: "IMUAngularVelocity",
-    DataName.FRAME_VELOCITIES: "Velocities",
+    DataName.FRAME_VELOCITIES: "SimVelocities",
     DataName.ON_EVENTS: "OnEvents",
     DataName.OFF_EVENTS: "OffEvents",
     DataName.DEPTH_MAP: "Depths",
     DataName.MOTION_FLOW: "MotionFlow",
-    DataName.GRAYSCALE: "GrayscaleImage",
+    # DataName.GRAYSCALE: "GrayscaleImage",
 }
 
 
@@ -102,7 +102,7 @@ class H5Dataset(Dataset):
 
 
 class BalancedDataLoader:
-    def __init__(self, datasets: List[Dataset], batch_size: int, num_workers=4, drop_last=True):
+    def __init__(self, datasets: List[Dataset], batch_size: int, num_workers=1, drop_last=True):
         self.batch_size = batch_size
         self.data_loaders = [DataLoader(d, batch_size=batch_size, num_workers=num_workers, shuffle=True, drop_last=drop_last) for d in datasets]
 
@@ -204,7 +204,7 @@ def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, bat
         for events, targets in data_loader:
             events = events.to(device)
             targets = targets.to(device)
-            events = IF.gaussian_blur(events, [5, 5]) # get the damn network moving
+            # events = IF.gaussian_blur(events, [5, 5]) # get the damn network moving
             net.train()
             # back propogate through time for the batch
             utils.reset(net) # reset SNN memories at the start of the batch
@@ -218,15 +218,25 @@ def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, bat
             # do backwards pass per batch loss
             optimizer.zero_grad()
             batch_loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+            # torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             optimizer.step()
-            batch_loss = batch_loss / events.shape[0]
-            losses.append(float(batch_loss.detach()))
-            epoch_loss += float(batch_loss.detach())
+            batch_loss = float(batch_loss.detach())
+            batch_loss /= events.shape[0]
+            losses.append(batch_loss)
+            epoch_loss += batch_loss
+        # print the weights per epoch
         for name, p in net.named_parameters():
             if p.grad is not None:
                 print(name, p.grad.norm())
-        print(epoch_loss)
+        print(f"Loss: {epoch_loss}")
+        torch.save({
+            "model": net.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "epoch": epoch,
+            "loss": epoch_loss,
+        }, f"models/checkpoint{epoch}.pth")
+        if (len(losses) > 50):
+            break
     return losses, AAE
 
 
@@ -267,14 +277,56 @@ def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunc
     return losses, AAE
 
 
+def train_velocity_net(input_file_paths: List[str], batch_size: int = 128, epochs: int=1) -> List[float]:
+    datasets: List[Dataset] = [H5Dataset(path, [name_map[DataName.FRAME_VELOCITIES],
+                                                name_map[DataName.DEPTH_MAP],
+                                                name_map[DataName.MOTION_FLOW]]) for path in input_file_paths]
+    device = torch.device("cuda")
+    net = VelocityNet().to(device)
+    data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
+    optimizer = optim.Adam(net.parameters(), lr=1e-3)
+    losses: List[float] = []
+    net.train()
+    for epoch in range(epochs):
+        print(f"Training Epoch {epoch}.")
+        epoch_loss = 0.0
+        for _, velocities, depths, flows in data_loader:
+            velocities = velocities.to(device)
+            depths = depths.to(device)
+            depths[torch.isinf(depths)] = 0.0
+            flows = flows.to(device)
+            flows[flows == -1.0] = 0.0
+            result = net(depths, flows)
+            loss = calculate_velocity_loss(result, velocities)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            loss = float(loss.item())
+            losses.append(loss)
+            epoch_loss += loss
+        for name, p in net.named_parameters():
+            if p.grad is not None:
+                print(name, p.grad.norm())
+        # losses.append(epoch_loss)
+        print(f"Loss: {epoch_loss}")
+        torch.save({
+            "model": net.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "epoch": epoch,
+            "loss": epoch_loss,
+        }, f"models/checkpoint{epoch}.pth")
+    return losses
+
+
 def train_velometry_component(input_file_paths: List[str], net: VelometryComponent, epochs: int  = 1) -> Tuple[List[float], List[float]]:
-    data_names = [name_map[dataName] for dataName in data_map[type(net)][0]] + [name_map[DataName.GRAYSCALE]]
+    data_names = [name_map[dataName] for dataName in data_map[type(net)][0]]
     datasets: List[Dataset] = [H5Dataset(path, data_names) for path in input_file_paths]
     if len(data_map[type(net)][0]) > 1:
         print("velocity training")
-        losses, AAE = train_velocity(datasets, net, data_map[type(net)][1], epochs=epochs)
+        losses, AAE = train_velocity(datasets, net,
+         data_map[type(net)][1], epochs=epochs)
     else:
-        losses, AAE = train_from_image(datasets, net, data_map[type(net)][1], epochs=epochs)
+        losses, AAE = train(datasets, net, data_map[type(net)][1], epochs=epochs)
     return losses, AAE
 
 
@@ -289,15 +341,22 @@ if __name__ == "__main__":
         f.close()
         input_file_paths.append(path)
 
-    loss, AAE = train_velometry_component(input_file_paths, OpticalFlowNet(), epochs=5)
+
+    losses = train_velocity_net(input_file_paths, batch_size=64, epochs=5)
+    np.save("velocity-5-epoch-losses.npy", losses)
+    # net = OpticalFlowNet().to(torch.device("cuda"))
+    # losses, AAE = train_velometry_component(input_file_paths, net, epochs=1)
+
+    # # losses = train_velocity_net(input_file_paths, 128, 1)
+    # # loss, AAE = train_velometry_component(input_file_paths, OpticalFlowNet(), epochs=5)
     
-    # loss_norm = train_velometry_component(input_file_paths, OpticalFlowNet())
+    # # loss_norm = train_velometry_component(input_file_paths, OpticalFlowNet())
 
-    plt.plot(loss, label='velocity net', color='orange')
-    # plt.plot(loss_norm, label='normal net', color='blue')
-    plt.show()
+    # plt.plot(losses, label='velocity net', color='orange')
+    # # plt.plot(loss_norm, label='normal net', color='blue')
+    # plt.show()
 
-    plt.plot(AAE, color='orange')
-    # plt.plot(aae_norm, color='blue')
-    plt.show()
+    # plt.plot(AAE, color='orange')
+    # # # plt.plot(aae_norm, color='blue')
+    # plt.show()
 
