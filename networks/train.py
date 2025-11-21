@@ -190,14 +190,14 @@ def train_from_image(datasets: Dataset, net: VelometryComponent, loss_fn: LossFu
     return losses, AAE
 
 
-def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 5) -> Tuple[List[float], List[float]]:
+def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 5) -> List[float]:
     device = torch.device("cuda")
     data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
     optimizer = optim.Adam(net.parameters(), lr=1e-3)
 
 
     losses: List[float] = []
-    AAE: List[float] = []
+    # AAE: List[float] = []
     for epoch in range(epochs):
         print(f"Training Epoch {epoch}.")
         epoch_loss = 0.0
@@ -213,11 +213,57 @@ def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, bat
             for i in range(1, events.shape[0]):
                 result, mem_batches[i] = net(events[i].unsqueeze(0), mem_batches[i-1]) # pass one set of spikes in at a time
                 loss = loss_fn(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0))
-                AAE.append(float(calculate_AAE(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0)).detach()))
+                # AAE.append(float(calculate_AAE(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0)).detach()))
                 batch_loss = batch_loss + loss
             # do backwards pass per batch loss
             optimizer.zero_grad()
             batch_loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0, error_if_nonfinite=True)
+            optimizer.step()
+            batch_loss = float(batch_loss.detach())
+            batch_loss /= events.shape[0]
+            losses.append(batch_loss)
+            epoch_loss += batch_loss
+        # print the weights per epoch
+        for name, p in net.named_parameters():
+            if p.grad is not None:
+                print(name, p.grad.norm())
+        print(f"Loss: {epoch_loss}")
+        torch.save({
+            "model": net.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "epoch": epoch,
+            "loss": epoch_loss,
+        }, f"models/checkpoint{epoch}.pth")
+    return losses
+
+
+def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 1) -> List[float]:
+    device = torch.device("cuda")
+    data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
+    optimizer = optim.Adam(net.parameters(), lr=1e-4)
+
+
+    losses: List[float] = []
+    for epoch in range(epochs):
+        print(f"Training Epoch {epoch}.")
+        epoch_loss = 0.0
+        for events, velocities, targets in data_loader:
+            events = events.to(device)
+            targets = targets.to(device)
+            velocities = velocities.to(device)
+            net.train()
+            # back propogate through time for the batch
+            utils.reset(net) # reset SNN memories at the start of the batch
+            mem_batches = net.init_mems(events, device)
+            batch_loss = 0.0
+            for i in range(1, events.shape[0]):
+                result, mem_batches[i] = net(events[i].unsqueeze(0), velocities[i-1], mem_batches[i-1]) # pass one set of spikes in at a time, and previous velocity estimate
+                loss = loss_fn(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0))
+                batch_loss = batch_loss + loss
+            # do backwards pass per batch loss
+            optimizer.zero_grad()
+            loss.backward()
             # torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
             optimizer.step()
             batch_loss = float(batch_loss.detach())
@@ -235,46 +281,7 @@ def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, bat
             "epoch": epoch,
             "loss": epoch_loss,
         }, f"models/checkpoint{epoch}.pth")
-        if (len(losses) > 50):
-            break
-    return losses, AAE
-
-
-def train_velocity(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 1) -> Tuple[List[float], List[float]]:
-    device = torch.device("cuda")
-    data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
-    optimizer = optim.Adam(net.parameters(), lr=1e-4)
-
-
-    losses: List[float] = []
-    AAE: List[float] = []
-    for epoch in range(epochs):
-        print(f"Training Epoch {epoch}.")
-        for events, velocities, targets in data_loader:
-            events = events.to(device)
-            targets = targets.to(device)
-            velocities = velocities.to(device)
-            net.train()
-            # back propogate through time for the batch
-            utils.reset(net) # reset SNN memories at the start of the batch
-            mem_batches = net.init_mems(events, device)
-            loss = 0.0
-            for i in range(1, events.shape[0]):
-                result, mem_batches[i] = net(events[i].unsqueeze(0), velocities[i-1], mem_batches[i-1]) # pass one set of spikes in at a time, and previous velocity estimate
-                loss += loss_fn(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0))
-                AAE.append(float(calculate_AAE(result, targets[i].unsqueeze(0), events[i-1].unsqueeze(0), events[i].unsqueeze(0)).detach()))
-            # do backwards pass per batch loss
-            optimizer.zero_grad()
-            loss.backward()
-            total_norm = 0
-            for name, p in net.named_parameters():
-                if p.grad is not None:
-                    print(f"{name}, {p.grad.norm()}")
-            # torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-            optimizer.step()
-            loss = loss / events.shape[0]
-            losses.append(float(loss.detach()))
-    return losses, AAE
+    return losses
 
 
 def train_velocity_net(input_file_paths: List[str], batch_size: int = 128, epochs: int=1) -> List[float]:
@@ -318,16 +325,15 @@ def train_velocity_net(input_file_paths: List[str], batch_size: int = 128, epoch
     return losses
 
 
-def train_velometry_component(input_file_paths: List[str], net: VelometryComponent, epochs: int  = 1) -> Tuple[List[float], List[float]]:
+def train_velometry_component(input_file_paths: List[str], net: VelometryComponent, epochs: int  = 1) -> List[float]:
     data_names = [name_map[dataName] for dataName in data_map[type(net)][0]]
     datasets: List[Dataset] = [H5Dataset(path, data_names) for path in input_file_paths]
     if len(data_map[type(net)][0]) > 1:
         print("velocity training")
-        losses, AAE = train_velocity(datasets, net,
-         data_map[type(net)][1], epochs=epochs)
+        losses = train_velocity(datasets, net, data_map[type(net)][1], epochs=epochs)
     else:
-        losses, AAE = train(datasets, net, data_map[type(net)][1], epochs=epochs)
-    return losses, AAE
+        losses = train(datasets, net, data_map[type(net)][1], epochs=epochs)
+    return losses
 
 
 if __name__ == "__main__":
@@ -342,8 +348,10 @@ if __name__ == "__main__":
         input_file_paths.append(path)
 
 
-    losses = train_velocity_net(input_file_paths, batch_size=64, epochs=5)
-    np.save("velocity-5-epoch-losses.npy", losses)
+    device = torch.device("cuda")
+    net = OpticalFlowNet().to(device)
+    losses = train_velometry_component(input_file_paths, net, 100)
+    np.save("flow-100-epoch-losses.npy", losses)
     # net = OpticalFlowNet().to(torch.device("cuda"))
     # losses, AAE = train_velometry_component(input_file_paths, net, epochs=1)
 
