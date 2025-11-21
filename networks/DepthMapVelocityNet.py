@@ -33,9 +33,11 @@ class DepthMapVelocityNet(VelocityComponentInterface):
             nn.ReLU(),
             nn.Conv2d(output_channels, output_channels, 3),
             nn.ReLU(),
-            nn.Conv2d(output_channels, 1, 1) # 1 output channel for depth map
+            nn.Conv2d(output_channels, 1, 1), # 1 output channel for depth map
+            nn.Softplus()
         ))
         self.decoder_layers.reverse()
+        self.decoder_layers = nn.ModuleList(self.decoder_layers)
 
 
 # Testing works

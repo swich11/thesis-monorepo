@@ -5,6 +5,9 @@ import torch.nn as nn
 import torchvision.transforms.functional as F
 
 
+from snntorch import utils
+
+
 from typing import List
 from ComponentInterface import ComponentInterface
 from utils import calculate_depth_loss
@@ -38,12 +41,19 @@ class DepthMapNet(ComponentInterface):
             nn.Conv2d(output_channels, 1, 1) # 1 output channel for depth map
         ))
         self.decoder_layers.reverse()
+        self.decoder_layers = nn.ModuleList(self.decoder_layers)
 
 
 # Testing
 if __name__ == "__main__":
-    net = DepthMapNet()
-    x = torch.randn(1, 2, 346, 260)
-    y: torch.Tensor = net(x)
-    calculate_depth_loss(y, torch.randn(1, 1, 346, 260)).backward()
+    with torch.autograd.detect_anomaly():
+        net = DepthMapNet()
+        x = torch.randn(1, 2, 346, 260)
+        mems = net.init_mems(x, x.device)
+        y, mems[0] = net(x, mems[0])
+        print(y)
+        torch.mean(y).backward()
+        x = torch.randn(1, 2, 346, 260)
+        y, mems[0] = net(x, mems[0])
+        print(y)
 

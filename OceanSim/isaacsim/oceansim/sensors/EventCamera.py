@@ -81,6 +81,7 @@ class EventCamera(Camera):
                               orientation_filter_size)
         self._writing = False
         self._lin_vel: np.float32 = 0.0
+        self._dataset_count = 0
 
 
     def initialize(self, 
@@ -134,6 +135,7 @@ class EventCamera(Camera):
         # Add event annotators here
         self._annot_dict = {
             "HdrColor": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('HdrColor', device=str(self._device))])),
+            "LdrColor": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('LdrColor', device=str(self._device))])),
             "Depths": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('distance_to_image_plane', device=str(self._device))])),
             "Dists": TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('distance_to_camera', device=str(self._device))])),
             "MotionFlow":  TuplePair(tuple([rep.AnnotatorRegistry.get_annotator('motion_vectors', device=str(self._device))])),
@@ -165,6 +167,7 @@ class EventCamera(Camera):
                 "IMUTime": TuplePair((np.float32, (1,))),
                 "IMULinearAcceleration": TuplePair((np.float32, (3,))),
                 "IMUAngularVelocity": TuplePair((np.float32, (3,))),
+                "GrayscaleImage": TuplePair((np.float32, (self._resolution[1], self._resolution[0]))), # GreyScale G
             }
             self._write_buffers = {
                 "OnEvents": [],
@@ -176,11 +179,12 @@ class EventCamera(Camera):
                 "IMUTime": [],
                 "IMULinearAcceleration": [],
                 "IMUAngularVelocity": [],
+                "GrayscaleImage": [],
             }
 
 
 
-            self.open_h5py(Path(writing_dir, "oceansim_dataset.h5py").resolve())
+            self.open_h5py(Path(writing_dir).resolve())
 
         print(f'[{self.name}] Initialized successfully. Data writing: {self._writing}')
     
@@ -199,7 +203,7 @@ class EventCamera(Camera):
         """
         for key in self._annot_dict.keys():
             self._annot_dict[key].data = self._annot_dict[key][0].get_data()
-        # ldr = self._rgb_annotator.get_data() # from the Camera class
+        ldr_curr: wp.array = self._annot_dict["LdrColor"].data
         hdr_curr: wp.array = self._annot_dict["HdrColor"].data
         depths: wp.array = self._annot_dict["Dists"].data # distance to camera for water attenuation
         frame_time: float = self._current_frame["rendering_time"] # simulator time for the frame
@@ -211,6 +215,7 @@ class EventCamera(Camera):
         if hdr_curr.size != 0:
             on_events, off_events = self._renderer.calculate_events(hdr_curr, depths)
             event_frame = self._renderer.render(on_events, off_events)
+            grayscale_image = np.sum(ldr_curr.numpy()[:, :, :-1], axis=2) / 3.0 # get the grayscale image quickly
             if self._viewport:
                 # convert depth map values to grayscale image in rgba format
                 # probably run these async
@@ -237,6 +242,7 @@ class EventCamera(Camera):
                     "OffEvents": off_events.numpy(),
                     "Depths": self._annot_dict["Depths"].data.numpy(),
                     "MotionFlow": self._annot_dict["MotionFlow"].data.numpy(),
+                    "GrayscaleImage": grayscale_image,
                 }
                 self._writing_backend.schedule(self.write_data, data_dict)
                 
@@ -345,10 +351,10 @@ class EventCamera(Camera):
     def open_h5py(self, path: str):
         """Create the h5py dataset on path. Destroys dataset if it already exists.
         
-        Returns -> None
+            Returns -> None
         """
         # TODO: filter dir for no overwrites
-        self._dataset_file = h5py.File(path, 'w')
+        self._dataset_file = h5py.File(f"{path}/dataset{self._dataset_count}.hdf5", 'w')
         for key in self._write_dict.keys():
             data_shape = list(self._write_dict[key][1])
             self._write_dict[key].data = self._dataset_file.create_dataset(
@@ -356,7 +362,6 @@ class EventCamera(Camera):
                                                                 shape=tuple([0] + data_shape),
                                                                 dtype=self._write_dict[key][0],
                                                                 maxshape=tuple([None] + data_shape),
-                                                                chunks=(64, *data_shape),
                                                                 compression="lzf",      
             ) # this will autochunk and autocompress
                                         
@@ -376,8 +381,7 @@ class EventCamera(Camera):
         """
         self._write_buffers[key].append(data)
         if (len(self._write_buffers[key]) == 64):
-            self.write_from_buffer(self._write_buffers[key].copy(), key)
-            self._write_buffers[key] = []
+            self.write_from_buffer(self._write_buffers[key], key, 64)
 
 
     def write_data(self, data_dict: dict) -> None:
@@ -385,15 +389,15 @@ class EventCamera(Camera):
             self.write_h5py_numpy(data_dict[key], key)
 
 
-    def write_from_buffer(self, buffer: list, key: str) -> None:
-        length = len(buffer)
+    def write_from_buffer(self, buffer: list, key: str, length: int) -> None:
         dset: h5py.Dataset = self._write_dict[key].data
         start = dset.shape[0]
         dset.resize((dset.shape[0] + length, *dset.shape[1:]))
-        stack = np.stack(buffer, axis=0)
+        stack = np.stack(buffer[:length], axis=0)
         if (len(stack.shape) == 1):
             stack = np.expand_dims(stack, axis=1)
         dset[start:] = stack
+        self._write_buffers[key] = self._write_buffers[key][length:]
 
 
     def close_h5py(self) -> None:
@@ -403,9 +407,15 @@ class EventCamera(Camera):
         """
         # Write remaining data
         for key in self._write_dict.keys():
-            self.write_from_buffer(self._write_buffers[key], key)
+            length = len(self._write_buffers[key])
+            if (length > 0):
+                self.write_from_buffer(self._write_buffers[key], key, length)
         print(f"Waiting for dataset writing to finish...")
-        while (self._writing_backend.is_done_writing()):
+        while (not self._writing_backend.is_done_writing()):
             pass
         print(f"Writing to {self._writing_dir} completed. :)")
+        for key in self._write_dict.keys():
+            self._write_dict[key].data = None
         self._dataset_file.close()
+        self._dataset_file = None
+        self._dataset_count += 1
