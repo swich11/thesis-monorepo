@@ -193,7 +193,7 @@ def train_from_image(datasets: Dataset, net: VelometryComponent, loss_fn: LossFu
 def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, batch_size: int  = 16, epochs: int = 5) -> List[float]:
     device = torch.device("cuda")
     data_loader = BalancedDataLoader(datasets, batch_size=batch_size, num_workers=4, drop_last=True)
-    optimizer = optim.Adam(net.parameters(), lr=1e-3)
+    optimizer = optim.Adam(net.parameters(), lr=5e-4)
 
 
     losses: List[float] = []
@@ -218,7 +218,7 @@ def train(datasets: Dataset, net: VelometryComponent, loss_fn: LossFunction, bat
             # do backwards pass per batch loss
             optimizer.zero_grad()
             batch_loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0, error_if_nonfinite=True)
+            # torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0, error_if_nonfinite=True)
             optimizer.step()
             batch_loss = float(batch_loss.detach())
             batch_loss /= events.shape[0]
